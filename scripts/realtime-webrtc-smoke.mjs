@@ -130,6 +130,7 @@ async function main() {
           toolCallCount: toolCalls.length,
           toolNames: [...new Set(toolCalls.map((e) => e.state))].filter(Boolean),
           recentEventTypes: (debug?.events ?? []).map((event) => event.type).slice(-25),
+          rawFunctionCallEvents: debug?.rawFunctionCallEvents ?? [],
           screenshot,
           consoleMessages,
           failures,

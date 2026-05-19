@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "seed": "tsx src/seed.ts",
+    "seed:templates": "tsx src/seed-templates.ts",
     "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {

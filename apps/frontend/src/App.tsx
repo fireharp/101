@@ -602,6 +602,36 @@ export function App() {
     voicePolishEnabled,
   ]);
 
+  // Retry the current drill (creates a fresh attempt on the same drill,
+  // bypassing rotation). Useful right after a fail when the rubric is
+  // still fresh in mind.
+  const onRetry = useCallback(async () => {
+    if (!session || !drill) return;
+    clearAutoAdvance();
+    setError(null);
+    setGrade(null);
+    setTranscript("");
+    try {
+      const d = await api.retryDrill(session.id, drill.drill_id);
+      setDrill(d);
+      setDrillCount((c) => c + 1);
+      startTimer();
+      if (voicePolishEnabled && health?.openai_configured) {
+        await startVoiceForDrill(d);
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [
+    clearAutoAdvance,
+    drill,
+    health?.openai_configured,
+    session,
+    startTimer,
+    startVoiceForDrill,
+    voicePolishEnabled,
+  ]);
+
   useEffect(() => {
     clearAutoAdvance();
     if (
@@ -813,6 +843,14 @@ export function App() {
             void onNext();
           }
           break;
+        case "r":
+          // Shift+R = retry current drill. Plain `r` reserved so we don't
+          // intercept anything an autocomplete might use.
+          if (ev.shiftKey && session && drill && grade && !grading) {
+            ev.preventDefault();
+            void onRetry();
+          }
+          break;
         case "e":
           if (session && !ending && !grading) {
             ev.preventDefault();
@@ -830,8 +868,10 @@ export function App() {
   }, [
     drill,
     ending,
+    grade,
     grading,
     onEndSession,
+    onRetry,
     onNext,
     onSubmit,
     session,
@@ -1585,6 +1625,16 @@ export function App() {
               >
                 Next drill
               </button>
+              {grade && grade.verdict !== "pass" && drill && (
+                <button
+                  data-testid="retry-drill"
+                  onClick={onRetry}
+                  disabled={grading}
+                  title="Try this same drill again now (Shift+R)"
+                >
+                  Try again
+                </button>
+              )}
               {voiceAutoAdvance && voiceConnected && grade && (
                 <button
                   data-testid="next-drill-now"
@@ -1622,6 +1672,7 @@ export function App() {
             >
               <kbd style={kbdStyle}>⌘/Ctrl</kbd>+<kbd style={kbdStyle}>↵</kbd>{" "}
               submit &nbsp;·&nbsp; <kbd style={kbdStyle}>n</kbd> next
+              &nbsp;·&nbsp; <kbd style={kbdStyle}>⇧R</kbd> retry
               &nbsp;·&nbsp; <kbd style={kbdStyle}>e</kbd> end
               &nbsp;·&nbsp; <kbd style={kbdStyle}>p</kbd> pressure
             </div>

@@ -246,6 +246,62 @@ apiRouter.post(
 );
 
 /* ------------------------------------------------------------------ */
+/* POST /api/drill-sessions/:id/retry                                 */
+/* Force a retry of a specific drill in the current session. Bypasses */
+/* the rotation engine so the user can immediately re-attempt the    */
+/* drill they just failed.                                            */
+/* ------------------------------------------------------------------ */
+const retryDrillSchema = z.object({
+  drill_id: z.string().min(1),
+});
+
+apiRouter.post("/drill-sessions/:id/retry", (req: Request, res: Response) => {
+  const userId = userIdFromRequest(req);
+  const sessionId = String(req.params.id ?? "");
+  if (!sessionId) return res.status(400).json({ error: "missing id" });
+  const session = sessions.get(sessionId);
+  if (!session) return res.status(404).json({ error: "session not found" });
+  if (session.user_id !== userId) {
+    return res.status(403).json({ error: "session not owned by user" });
+  }
+  const parsed = retryDrillSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.message });
+  }
+  const drill = drills.get(parsed.data.drill_id);
+  if (!drill) return res.status(404).json({ error: "drill not found" });
+
+  const attempt = attempts.createPending({
+    user_id: userId,
+    session_id: session.id,
+    drill_id: drill.id,
+  });
+  events.log(session.id, "drill_picked", {
+    drill_id: drill.id,
+    attempt_id: attempt.id,
+    topic: drill.topic,
+    subtopic: drill.subtopic,
+    difficulty: drill.difficulty,
+    retry: true,
+  });
+
+  const prior = attempts.priorForDrill(userId, drill.id, 5);
+  res.json({
+    drill: {
+      drill_id: drill.id,
+      attempt_id: attempt.id,
+      question_text: drill.question_text,
+      topic: drill.topic,
+      subtopic: drill.subtopic,
+      difficulty: drill.difficulty,
+      expected_answer_shape: drill.rubric.must_have,
+      rubric: drill.rubric,
+      prior_attempts: prior,
+    },
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* GET /api/drill-attempts/:id                                        */
 /* Full attempt detail (transcript, missed_points, ideal_answer,      */
 /* created_cards). Owner-scoped — 403 for the wrong user.             */

@@ -188,6 +188,7 @@ Verdict: `>= 0.80 pass`, `0.60–0.79 borderline`, `< 0.60 fail`.
 | `POST` | `/api/realtime/token` | mint ephemeral Realtime client secret |
 | `POST` | `/api/drill-sessions` | start a drill session |
 | `POST` | `/api/drill-sessions/:id/next` | pick next drill via rotation |
+| `POST` | `/api/drill-sessions/:id/retry` | force a fresh attempt on a specific drill (bypasses rotation) |
 | `POST` | `/api/drill-attempts/:id/transcript` | save transcript + duration |
 | `POST` | `/api/drill-attempts/:id/grade` | grade an attempt (LLM or offline) |
 | `GET`  | `/api/drill-attempts/:id` | full attempt detail (transcript, missed points, ideal answer, cards) — owner-scoped |
@@ -352,6 +353,7 @@ reaching for the mouse:
 | --- | --- |
 | `⌘` / `Ctrl` + `Enter` | Submit the typed answer (works from inside the textarea) |
 | `n` | Next drill |
+| `Shift` + `R` | Retry the current drill (creates a fresh attempt on the same drill) |
 | `e` | End session |
 | `p` | Toggle pressure mode |
 
@@ -392,7 +394,14 @@ Three layers, fastest to slowest:
 Run everything offline in one shot:
 
 ```bash
-pnpm check          # build + tests + REST smoke + browser smoke
+pnpm check          # verify drill YAML + build + tests + REST smoke + browser smoke
+```
+
+You can run the drill linter on its own:
+
+```bash
+pnpm verify:drills
+# verify:drills OK — 51 drills validated across 21 files
 ```
 
 Same command CI uses. The realtime smokes are separate because they need

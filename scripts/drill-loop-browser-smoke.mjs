@@ -120,6 +120,40 @@ async function main() {
       throw new Error(`unexpected verdict: ${verdict}`);
     }
 
+    // If this verdict isn't a pass, the "Try again" button should render.
+    // Click it and assert the new question text equals the old one
+    // (same drill, fresh attempt).
+    let retryWorked = false;
+    if (verdict !== "pass") {
+      const retryButton = page.getByTestId("retry-drill");
+      if ((await retryButton.count()) > 0) {
+        await retryButton.click();
+        await page.waitForFunction(
+          () => {
+            // After Try again, the question DOM is recreated (new key) and
+            // the grade panel goes away. Detect by absence of grade-panel
+            // and presence of the question.
+            const grade = document.querySelector('[data-testid="grade-panel"]');
+            const q = document.querySelector('[data-testid="question"]');
+            return (
+              !grade &&
+              q instanceof HTMLElement &&
+              q.innerText.trim().length > 0
+            );
+          },
+          undefined,
+          { timeout: 5000 },
+        );
+        const qRetry = (await page.getByTestId("question").innerText()).trim();
+        if (qRetry !== q1) {
+          throw new Error(
+            `retry should keep the same drill text; got\n  before: ${q1.slice(0, 80)}\n  after:  ${qRetry.slice(0, 80)}`,
+          );
+        }
+        retryWorked = true;
+      }
+    }
+
     await page.getByTestId("next-drill").click();
     // The previous grade panel should disappear and a new question appears.
     await page.waitForFunction(
@@ -213,6 +247,7 @@ async function main() {
           gradeVerdict: verdict,
           historyRowCount,
           auditEventTypes: eventTypes,
+          retryWorked,
           screenshot,
           consoleErrors,
           pageErrors,

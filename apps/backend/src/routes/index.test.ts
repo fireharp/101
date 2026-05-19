@@ -712,6 +712,71 @@ test("GET /api/sessions lists recent sessions newest-first with rollup stats", a
   );
 });
 
+test("POST /api/drill-sessions/:id/retry forces a fresh attempt on the same drill", async () => {
+  const sess = await http<{ session: { id: string } }>(
+    "POST",
+    "/api/drill-sessions",
+    { mode: "mixed" },
+  );
+  const sid = sess.json.session.id;
+  const next = await http<{
+    drill: { drill_id: string; attempt_id: string };
+  }>("POST", `/api/drill-sessions/${sid}/next`, {});
+  const drillId = next.json.drill.drill_id;
+  const firstAttempt = next.json.drill.attempt_id;
+
+  const retry = await http<{
+    drill: { drill_id: string; attempt_id: string; prior_attempts: unknown[] };
+  }>("POST", `/api/drill-sessions/${sid}/retry`, { drill_id: drillId });
+  assert.equal(retry.status, 200);
+  assert.equal(retry.json.drill.drill_id, drillId, "retry must reuse drill");
+  assert.notEqual(
+    retry.json.drill.attempt_id,
+    firstAttempt,
+    "retry must create a new attempt id",
+  );
+
+  // Wrong-user 403.
+  const wrong = await fetch(`${base}/api/drill-sessions/${sid}/retry`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-user-id": "different-user",
+    },
+    body: JSON.stringify({ drill_id: drillId }),
+  });
+  assert.equal(wrong.status, 403);
+
+  // Missing body returns 400.
+  const bad = await fetch(`${base}/api/drill-sessions/${sid}/retry`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({}),
+  });
+  assert.equal(bad.status, 400);
+
+  // Unknown drill returns 404.
+  const missing = await fetch(`${base}/api/drill-sessions/${sid}/retry`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ drill_id: "no_such_drill_xyz" }),
+  });
+  assert.equal(missing.status, 404);
+
+  // Audit log records the retry flag.
+  const events = await http<{ events: { event_type: string; payload: Record<string, unknown> | null }[] }>(
+    "GET",
+    `/api/drill-sessions/${sid}/events`,
+  );
+  const retried = events.json.events.find(
+    (e) =>
+      e.event_type === "drill_picked" &&
+      e.payload &&
+      (e.payload as { retry?: boolean }).retry === true,
+  );
+  assert.ok(retried, "session_events should record retry: true");
+});
+
 test("GET /api/drill-attempts/:id returns full attempt detail, owner-scoped", async () => {
   const sess = await http<{ session: { id: string } }>(
     "POST",

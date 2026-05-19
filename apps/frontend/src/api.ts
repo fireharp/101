@@ -223,6 +223,15 @@ export const api = {
       body: JSON.stringify({ mode }),
     }).then((r) => r.session),
 
+  retryDrill: (sessionId: string, drillId: string) =>
+    jsonFetch<{ drill: DrillPayload }>(
+      `/api/drill-sessions/${sessionId}/retry`,
+      {
+        method: "POST",
+        body: JSON.stringify({ drill_id: drillId }),
+      },
+    ).then((r) => r.drill),
+
   nextDrill: (sessionId: string, mode?: Mode) =>
     jsonFetch<{ drill: DrillPayload }>(
       `/api/drill-sessions/${sessionId}/next`,

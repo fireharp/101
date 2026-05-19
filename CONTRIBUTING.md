@@ -65,6 +65,7 @@ engines/
 
 | Layer | Command | When it runs |
 | --- | --- | --- |
+| YAML drill linter | `pnpm verify:drills` | Every PR via CI. Validates `seeds/drills/*.yaml` against the seed schema; flags duplicate ids. |
 | Backend unit + route | `pnpm -r test` | Every PR via CI. `node:test` + Express on an ephemeral port. |
 | REST drill loop | `pnpm smoke:drill-loop` | Every PR via CI. Boots its own backend. Offline grader. |
 | Browser drill loop | `pnpm smoke:browser` | Every PR via CI. Playwright, no mic. Asserts grade panel + history + events timeline. |
@@ -86,9 +87,15 @@ The fastest path is Layer 1 (YAML seed):
    `subtopic`, `difficulty` 1-5, `trap_type`, `question_text`,
    `expected_answer`, `rubric`, `canonical_short_answer`, optional
    `canonical_deep_answer`, `tags`, `is_active`).
-3. Restart the backend, or `pnpm --filter @drill/backend seed`.
-4. `pnpm smoke:browser` should still pass — your drill might or might not
+3. Validate before committing: `pnpm verify:drills` — exits non-zero on
+   any malformed drill or duplicate id, with file + path + zod message.
+4. Restart the backend, or `pnpm --filter @drill/backend seed`.
+5. `pnpm smoke:browser` should still pass — your drill might or might not
    be picked, but rotation continues.
+
+`pnpm check` runs `verify:drills` first so CI catches bad YAML before
+booting the server (otherwise the seed loader just logs a `console.warn`
+and skips).
 
 For Layer 2 templates: edit `apps/backend/seeds/templates/*.yaml` and run
 `pnpm --filter @drill/backend seed:templates`. For Layer 3 LLM drafts:

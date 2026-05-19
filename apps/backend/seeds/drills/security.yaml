@@ -1,0 +1,79 @@
+- id: sec_password_storage_001
+  topic: security
+  subtopic: credentials
+  difficulty: 2
+  trap_type: weak_hash
+  question_text: >
+    Walk me through how you store user passwords.
+  expected_answer:
+    must_have:
+      - never plaintext
+      - never reversible encryption
+      - slow KDF — bcrypt, scrypt, argon2id
+      - per-user salt
+    nice_to_have:
+      - pepper or HSM
+      - tune cost factor with hardware
+    red_flags:
+      - SHA-256 alone
+      - MD5
+      - same salt for all users
+  rubric:
+    must_have:
+      - slow KDF named
+      - per-user salt
+      - reject fast hashes
+    nice_to_have:
+      - pepper / HSM
+      - cost tuning
+    red_flags:
+      - fast hash like SHA
+      - encrypt the password
+  canonical_short_answer: >
+    Hash with a slow KDF: argon2id, bcrypt, or scrypt, with a per-user
+    salt. Tune the cost factor so it takes ~100ms on prod hardware. Never
+    use SHA-256 alone or encryption — passwords must be one-way and
+    expensive to brute force.
+  canonical_deep_answer: null
+  tags: [auth, security]
+  is_active: true
+
+- id: sec_jwt_tradeoffs_002
+  topic: security
+  subtopic: tokens
+  difficulty: 3
+  trap_type: stateless_revocation
+  question_text: >
+    Your team wants stateless JWT auth for the API. What's the catch and how
+    do you handle revocation?
+  expected_answer:
+    must_have:
+      - JWTs are valid until expiry by design
+      - no built-in revocation
+      - short lifetime + refresh tokens
+      - or maintain a revocation list / version field
+    nice_to_have:
+      - rotate signing keys
+      - revoke by user-version comparison
+    red_flags:
+      - long-lived JWTs are fine
+      - delete the cookie to log out
+  rubric:
+    must_have:
+      - revocation problem named
+      - short TTL + refresh
+      - or denylist / version
+    nice_to_have:
+      - key rotation
+      - audience scoping
+    red_flags:
+      - claim deletion logs out everywhere
+      - 30-day JWTs by default
+  canonical_short_answer: >
+    Stateless JWTs are valid until they expire — you can't revoke them
+    without state. Use short lifetimes (5–15 min) plus a refresh token, or
+    keep a small revocation list / per-user version field that the server
+    checks. Logging out a stolen long-lived JWT is otherwise impossible.
+  canonical_deep_answer: null
+  tags: [auth, jwt]
+  is_active: true

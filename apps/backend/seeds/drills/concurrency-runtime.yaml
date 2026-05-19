@@ -1,0 +1,80 @@
+- id: rt_thread_pool_size_001
+  topic: concurrency
+  subtopic: thread_pools
+  difficulty: 3
+  trap_type: cpu_vs_io
+  question_text: >
+    How would you size a worker pool for an IO-bound service vs a CPU-bound
+    service running on a 16-core box?
+  expected_answer:
+    must_have:
+      - CPU-bound ≈ number of cores
+      - IO-bound much higher (e.g. cores * (1 + wait/compute))
+      - measure under real workload
+      - bound or queue saturates
+    nice_to_have:
+      - Little's law
+      - non-blocking IO alternative
+    red_flags:
+      - always one thread per core
+      - infinite thread pool
+  rubric:
+    must_have:
+      - distinguish IO vs CPU
+      - sizing rule of thumb
+      - measure not guess
+    nice_to_have:
+      - back-pressure / queueing
+      - context switch cost
+    red_flags:
+      - same answer for both
+      - unbounded pool
+  canonical_short_answer: >
+    CPU-bound: pool size ≈ number of cores (16) — extra threads only add
+    context switches. IO-bound: target = cores × (1 + wait/compute), often
+    50–200 — threads sit waiting. Always measure under realistic load,
+    bound the pool, and add a queue with back-pressure so you fail fast
+    instead of OOM-ing.
+  canonical_deep_answer: null
+  tags: [threads, performance]
+  is_active: true
+
+- id: rt_async_blocking_002
+  topic: concurrency
+  subtopic: event_loop
+  difficulty: 3
+  trap_type: blocking_in_async
+  question_text: >
+    Your Node service has p99 latency spikes. You discover a teammate added
+    a synchronous bcrypt call inside an HTTP handler. Why is this bad?
+  expected_answer:
+    must_have:
+      - single event loop thread
+      - sync CPU work blocks all in-flight requests
+      - move to worker thread / async lib
+      - same for fs.readFileSync, JSON.parse on huge payloads
+    nice_to_have:
+      - libuv thread pool
+      - cluster mode caveat
+    red_flags:
+      - just add more replicas
+      - async/await magically makes it async
+  rubric:
+    must_have:
+      - event loop blocking
+      - cross-request impact
+      - move CPU work off-loop
+    nice_to_have:
+      - thread pool details
+      - benchmarking
+    red_flags:
+      - vertical scale fixes it
+      - claim await yields
+  canonical_short_answer: >
+    Node runs all JS on one event loop thread. A synchronous bcrypt blocks
+    every concurrent request for its duration, spiking p99. Move CPU work
+    to a worker thread or use the async bcrypt API. Same rule for big
+    JSON.parse, sync fs calls, and any tight CPU loop.
+  canonical_deep_answer: null
+  tags: [node, async, performance]
+  is_active: true

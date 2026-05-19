@@ -1,0 +1,82 @@
+- id: cache_thundering_herd_001
+  topic: caching
+  subtopic: thundering_herd
+  difficulty: 3
+  trap_type: stampede
+  question_text: >
+    A popular product page caches a value that just expired. 10000 requests
+    hit at once, all miss, all hammer the database. How do you stop the
+    stampede?
+  expected_answer:
+    must_have:
+      - single-flight / request coalescing
+      - or stale-while-revalidate
+      - or lock around the rebuild
+      - one rebuild fills cache for everyone
+    nice_to_have:
+      - early refresh before expiry
+      - probabilistic early expiration
+    red_flags:
+      - lower TTL globally
+      - cache nothing
+  rubric:
+    must_have:
+      - single-flight or lock
+      - rebuild once
+      - others wait or serve stale
+    nice_to_have:
+      - probabilistic refresh
+      - stale-while-revalidate
+    red_flags:
+      - blanket TTL lowering
+      - just add more replicas
+  canonical_short_answer: >
+    Coalesce concurrent misses: the first request takes a per-key lock,
+    rebuilds the value, fills the cache, releases the lock. Others wait or
+    serve the previous stale value. Use stale-while-revalidate or
+    probabilistic early refresh so the rebuild happens before everyone is
+    waiting.
+  canonical_deep_answer: null
+  tags: [caching, redis, latency]
+  is_active: true
+
+- id: cache_write_strategy_002
+  topic: caching
+  subtopic: write_strategy
+  difficulty: 3
+  trap_type: write_path
+  question_text: >
+    Compare write-through, write-back, and write-around caching. When would
+    you pick each?
+  expected_answer:
+    must_have:
+      - write-through commits to cache + store synchronously
+      - write-back acks fast, persists later, risks loss on crash
+      - write-around skips cache on write, fills on miss
+      - read/write ratio drives the choice
+    nice_to_have:
+      - write coalescing in write-back
+      - write-around for write-heavy / read-rare
+    red_flags:
+      - one strategy is always right
+      - write-back is free
+  rubric:
+    must_have:
+      - three patterns named
+      - durability vs latency tradeoff
+      - workload-driven choice
+    nice_to_have:
+      - coalescing
+      - failure modes
+    red_flags:
+      - claim write-back has no risk
+      - confuse write-through with write-back
+  canonical_short_answer: >
+    Write-through writes to cache and store synchronously, consistent but
+    slow. Write-back acks from cache, persists later — fast but can lose
+    data on crash. Write-around skips the cache on write and fills on miss,
+    good for write-heavy data rarely read again. Pick based on durability
+    requirements and the read/write ratio.
+  canonical_deep_answer: null
+  tags: [caching, consistency]
+  is_active: true

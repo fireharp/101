@@ -1,0 +1,81 @@
+- id: net_keepalive_pool_001
+  topic: networking
+  subtopic: connection_pools
+  difficulty: 3
+  trap_type: pool_exhaustion
+  question_text: >
+    Your service makes 5000 RPS of outbound HTTPS calls to a downstream API.
+    Every call opens a fresh TCP+TLS connection and tail latency is awful.
+    What do you change?
+  expected_answer:
+    must_have:
+      - reuse connections via HTTP keep-alive
+      - sized connection pool
+      - configure idle timeout
+      - TLS handshake cost dominates fresh connects
+    nice_to_have:
+      - HTTP/2 multiplexing
+      - circuit breaker on the downstream
+    red_flags:
+      - just add more servers
+      - disable TLS
+  rubric:
+    must_have:
+      - keep-alive / pooling
+      - bound pool size
+      - TLS handshake cost
+    nice_to_have:
+      - HTTP/2 single connection
+      - DNS caching
+    red_flags:
+      - new conn per request is fine
+      - infinite pool
+  canonical_short_answer: >
+    Reuse TCP+TLS connections with HTTP keep-alive and a properly sized
+    pool. Fresh handshakes dominate p99 — eliminating them is the win. Bound
+    the pool to avoid head-of-line blocking when the downstream slows. Use
+    HTTP/2 for multiplexing if the downstream supports it.
+  canonical_deep_answer: null
+  tags: [http, latency, scaling]
+  is_active: true
+
+- id: net_dns_failover_002
+  topic: networking
+  subtopic: dns
+  difficulty: 2
+  trap_type: dns_cache
+  question_text: >
+    You failover your primary database to a replica behind the same DNS name,
+    but app servers keep talking to the dead box. What's wrong and how do
+    you avoid it next time?
+  expected_answer:
+    must_have:
+      - DNS or TTL caching at the client / JVM / resolver
+      - app reuses the stale resolved IP
+      - shorten TTL or refresh
+      - or use a proxy / service mesh / virtual IP
+    nice_to_have:
+      - health-checking client library
+      - fail-fast on connection error to trigger re-resolve
+    red_flags:
+      - DNS is instant globally
+      - just restart all app servers
+  rubric:
+    must_have:
+      - DNS caching layer
+      - short TTL or active health check
+      - "alternative: proxy / service mesh"
+    nice_to_have:
+      - JVM negative cache caveat
+      - fail-fast then re-resolve
+    red_flags:
+      - claim DNS update is atomic
+      - blanket restart as plan
+  canonical_short_answer: >
+    Clients (and JVMs, kernels, resolvers) cache DNS for TTL or longer.
+    After failover, they keep using the old IP. Shorten TTL, configure your
+    HTTP client to re-resolve, or put a load balancer / proxy with a stable
+    VIP in front so DNS doesn't change at all.
+  canonical_deep_answer: null
+  tags: [dns, failover]
+  is_active: true

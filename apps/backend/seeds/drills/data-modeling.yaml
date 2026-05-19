@@ -1,0 +1,120 @@
+- id: dm_soft_delete_001
+  topic: data_modeling
+  subtopic: soft_delete
+  difficulty: 2
+  trap_type: hidden_complexity
+  question_text: >
+    A teammate adds a deleted_at column for soft delete across every table.
+    What hidden costs should you flag?
+  expected_answer:
+    must_have:
+      - every query needs WHERE deleted_at IS NULL
+      - indexes must be partial or include it
+      - unique constraints break (email reused after delete)
+      - foreign keys still point to soft-deleted rows
+    nice_to_have:
+      - audit / archive table as alternative
+      - row-level security or views
+    red_flags:
+      - soft delete is free
+      - just ignore deleted rows everywhere
+  rubric:
+    must_have:
+      - query filter discipline
+      - unique constraint trap
+      - FK / referential implications
+    nice_to_have:
+      - partial unique on active
+      - archive table approach
+    red_flags:
+      - bolt-on without query audit
+      - claim no perf impact
+  canonical_short_answer: >
+    Soft delete leaks complexity: every query needs the deleted_at filter,
+    unique constraints must become partial on active rows, foreign keys
+    still reference dead rows, and indexes grow with junk. Often an archive
+    table — move to deleted_users — is cleaner than a flag.
+  canonical_deep_answer: null
+  tags: [schema, postgres]
+  is_active: true
+
+- id: dm_polymorphic_assoc_002
+  topic: data_modeling
+  subtopic: polymorphic_associations
+  difficulty: 3
+  trap_type: missing_fk
+  question_text: >
+    A "comments" table has comment_target_type ('post' | 'photo' | 'video')
+    and comment_target_id. What's wrong with this design?
+  expected_answer:
+    must_have:
+      - cannot enforce FK to target row
+      - orphan comments possible
+      - JOINs need conditional logic
+      - one table per target type or supertable preferred
+    nice_to_have:
+      - explicit junction tables
+      - check constraints + multi-column FK pattern
+    red_flags:
+      - polymorphic is best practice
+      - FK is unnecessary
+  rubric:
+    must_have:
+      - no FK guarantee
+      - orphans
+      - alt design (per-type FK)
+    nice_to_have:
+      - check constraint variant
+      - join cost
+    red_flags:
+      - claim FK works fine
+      - ignore orphan risk
+  canonical_short_answer: >
+    Polymorphic associations break referential integrity — there's no
+    foreign key the database can enforce, so deleted parents leave orphans.
+    Prefer either per-target tables (post_comments, photo_comments) or a
+    real supertype table with concrete FK columns and a check constraint.
+  canonical_deep_answer: null
+  tags: [schema, postgres, mysql]
+  is_active: true
+
+- id: dm_eav_antipattern_003
+  topic: data_modeling
+  subtopic: eav
+  difficulty: 3
+  trap_type: entity_attribute_value
+  question_text: >
+    Product attributes vary per category. Someone proposes an EAV table
+    (entity_id, attribute_name, value). When is this OK, when is it not?
+  expected_answer:
+    must_have:
+      - poor queryability — every filter is a self-join
+      - no type safety
+      - indexing per-attribute is hard
+      - JSONB or category-specific tables are usually better
+    nice_to_have:
+      - JSON with indexed expression
+      - schema-on-read tradeoff
+    red_flags:
+      - EAV is generally best practice
+      - schema is always evil
+  rubric:
+    must_have:
+      - query cost
+      - typing problem
+      - alternative (JSON / per-category)
+    nice_to_have:
+      - GIN index on JSONB
+      - migration cost
+    red_flags:
+      - default to EAV
+      - claim no downsides
+  canonical_short_answer: >
+    EAV makes every "find products where color='red' and size='M'" a chain
+    of self-joins with no type safety. It's only acceptable when attributes
+    are truly unbounded and queries on them are rare. In Postgres prefer a
+    JSONB column with GIN indexes; in MySQL prefer category-specific
+    columns or generated columns.
+  canonical_deep_answer: null
+  tags: [schema, eav, postgres]
+  is_active: true

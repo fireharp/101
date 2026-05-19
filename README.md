@@ -164,15 +164,28 @@ Mapped to LOCAL.md §15:
 
 * **Postgres** — MVP uses SQLite. Schema is portable; the migration file is the
   obvious place to swap when you need multi-writer or hosted infra.
-* **Template-based generation (Layer 2)** — schema exists (`drill_templates`),
-  no generator wired yet.
+* **Card-review UI** for the spaced-repetition slots already in the schema.
+* **Layer-2 template generator** (`drill_templates`) — schema exists,
+  no generator yet.
 * **Admin/content editor**, **payments**, **Anki sync**, **per-user auth** —
   not in MVP.
-* **Full backend-driven tool protocol** for the voice agent. Today the
-  frontend drives the drill loop via REST while the agent reads the question
-  aloud and the transcript flows back. The tool surface (LOCAL.md §6) is the
-  natural next step: define tools in the realtime session config and handle
-  `response.function_call_arguments.done` on the data channel.
+
+### Voice-agent tool protocol (LOCAL.md §6) — wired
+
+The Realtime agent has six backend tools attached to the session config:
+`get_next_drill`, `submit_answer_transcript`, `grade_attempt`,
+`save_generated_cards`, `get_user_skill_summary`, `end_session_summary`.
+
+Tool calls flow over the data channel and are dispatched via a single
+backend endpoint `POST /api/realtime/tool-call`. The frontend hook
+(`useRealtime`) tracks (item_id → name) pairs across
+`response.output_item.added` and `response.function_call_arguments.done`,
+runs the registered handler, and sends back
+`conversation.item.create` with `function_call_output` plus
+`response.create`.
+
+App.tsx mirrors agent-driven `get_next_drill` and `grade_attempt` results
+into local state so the UI follows the agent.
 
 ## Smoke test (CLI)
 
@@ -222,6 +235,12 @@ REALTIME_SMOKE_AUDIO="/absolute/path/sample.wav" pnpm smoke:realtime
 
 # show the browser
 HEADLESS=0 pnpm smoke:realtime
+
+# don't fail the realtime smoke if the agent skips tool calls
+REALTIME_SMOKE_REQUIRE_TOOL=0 pnpm smoke:realtime
+
+# how long to wait for the agent's first tool call (default 20s)
+REALTIME_SMOKE_TOOL_WAIT_MS=30000 pnpm smoke:realtime
 ```
 
 The realtime smoke output includes a screenshot path and a tail of recent

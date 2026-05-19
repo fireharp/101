@@ -1,0 +1,121 @@
+- id: dist_cap_quorum_001
+  topic: distributed
+  subtopic: consensus
+  difficulty: 4
+  trap_type: cap_handwave
+  question_text: >
+    Your storage layer is a Raft-replicated KV store with 5 nodes. A network
+    partition isolates 2 nodes from the other 3. What can the cluster still
+    do, and why?
+  expected_answer:
+    must_have:
+      - majority side keeps quorum (3/5)
+      - majority side can read and write
+      - minority side rejects writes
+      - reads on minority can be stale / refused depending on read mode
+    nice_to_have:
+      - leader is on the majority side or new leader elected
+      - linearizable reads require quorum
+    red_flags:
+      - both sides keep writing
+      - claim Raft survives any partition
+  rubric:
+    must_have:
+      - quorum rule
+      - majority writes, minority blocks
+      - read consistency tradeoff
+    nice_to_have:
+      - leader election logic
+      - vs CP design like ZooKeeper
+    red_flags:
+      - both sides accept writes
+      - quorum is "more than 1"
+  canonical_short_answer: >
+    Raft needs a majority. The side with 3 nodes still has quorum, elects
+    (or keeps) a leader, and accepts writes. The 2-node side has no quorum,
+    rejects writes, and serves only stale reads if you allow non-linearizable
+    reads. When the partition heals, the minority catches up from the log.
+  canonical_deep_answer: null
+  tags: [raft, consensus, cap]
+  is_active: true
+
+- id: dist_clock_skew_002
+  topic: distributed
+  subtopic: time
+  difficulty: 3
+  trap_type: wall_clock_dependence
+  question_text: >
+    Your distributed service uses wall-clock timestamps to resolve which of
+    two writes is "newer". What goes wrong?
+  expected_answer:
+    must_have:
+      - clocks across nodes drift
+      - NTP can jump backwards
+      - last-write-wins on wall clock loses writes
+      - use logical clocks / versions / Lamport / vector clocks
+    nice_to_have:
+      - hybrid logical clocks
+      - monotonic clock for durations
+    red_flags:
+      - assume NTP keeps everything within microseconds
+      - timestamp resolution is enough
+  rubric:
+    must_have:
+      - clocks drift / jump
+      - LWW data loss
+      - logical clock alternative
+    nice_to_have:
+      - HLC
+      - monotonic vs wall
+    red_flags:
+      - perfect sync
+      - timestamp ties impossible
+  canonical_short_answer: >
+    Wall clocks drift, jump, and disagree across machines, so last-write-wins
+    by wall clock silently loses writes. Use logical clocks: Lamport
+    timestamps, vector clocks, or hybrid logical clocks. Use the wall clock
+    only for human display and durations from a monotonic source.
+  canonical_deep_answer: null
+  tags: [distributed, time]
+  is_active: true
+
+- id: dist_two_phase_commit_003
+  topic: distributed
+  subtopic: transactions
+  difficulty: 4
+  trap_type: blocking
+  question_text: >
+    A teammate proposes 2PC across three services to make a multi-service
+    operation atomic. Why might you push back?
+  expected_answer:
+    must_have:
+      - coordinator failure blocks participants
+      - holds locks while waiting
+      - not partition-tolerant
+      - real systems prefer sagas / outbox
+    nice_to_have:
+      - eventual consistency tradeoffs
+      - compensating actions
+    red_flags:
+      - 2PC is fast and free
+      - exactly-once at scale via 2PC
+  rubric:
+    must_have:
+      - blocking under coordinator loss
+      - lock contention
+      - propose saga / outbox
+    nice_to_have:
+      - 3PC limits
+      - business-level compensation
+    red_flags:
+      - claim distributed ACID is easy
+      - ignore failure modes
+  canonical_short_answer: >
+    2PC blocks if the coordinator crashes after prepare, holding locks on
+    every participant. It's not partition-tolerant and tail latency is bad
+    under failure. Prefer a saga with compensating actions, or transactional
+    outbox plus async retries — accept eventual consistency where the
+    business allows.
+  canonical_deep_answer: null
+  tags: [distributed, transactions, sagas]
+  is_active: true

@@ -90,22 +90,25 @@ async function main() {
     // ends — these typically arrive in the seconds after
     // `input_audio_buffer.speech_stopped`.
     const toolWaitMs = Number(process.env.REALTIME_SMOKE_TOOL_WAIT_MS ?? 20000);
-    await page
+    const requireToolCall = process.env.REALTIME_SMOKE_REQUIRE_TOOL !== "0";
+    const toolWaitErr = await page
       .waitForFunction(
         () => {
           const events = window.__drillRealtimeDebug?.events ?? [];
-          return events.some(
-            (e) =>
-              e.type === "response.function_call_arguments.done" ||
-              e.type === "tool_call.handled",
-          );
+          return events.some((e) => e.type === "tool_call.handled");
         },
         undefined,
         { timeout: toolWaitMs },
       )
-      .catch(() => {
-        /* tool call is best-effort; the smoke still passes if it didn't happen */
-      });
+      .then(() => null)
+      .catch((err) => err);
+    if (requireToolCall && toolWaitErr) {
+      throw new Error(
+        "Agent never called a backend tool within " +
+          toolWaitMs +
+          "ms; set REALTIME_SMOKE_REQUIRE_TOOL=0 to skip this assertion",
+      );
+    }
 
     const debug = await page.evaluate(() => window.__drillRealtimeDebug);
     const toolCalls = (debug?.events ?? []).filter(

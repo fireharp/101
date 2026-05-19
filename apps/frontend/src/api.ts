@@ -128,6 +128,30 @@ export const api = {
       }[];
     }>("/api/progress"),
 
+  cardsDue: (limit = 20) =>
+    jsonFetch<{
+      cards: {
+        id: string;
+        front: string;
+        back: string;
+        topic: string | null;
+        subtopic: string | null;
+        next_due_at: string | null;
+      }[];
+      stats: { total: number; due: number };
+    }>(`/api/cards/due?limit=${limit}`),
+
+  reviewCard: (cardId: string, quality: 0 | 1) =>
+    jsonFetch<{
+      ok: boolean;
+      interval_days: number;
+      ease: number;
+      next_due_at: string;
+    }>(`/api/cards/${cardId}/review`, {
+      method: "POST",
+      body: JSON.stringify({ quality }),
+    }),
+
   toolCall: (
     sessionId: string,
     name: string,

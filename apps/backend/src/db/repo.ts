@@ -387,4 +387,77 @@ export const cards = {
       )
       .all(userId, limit) as GeneratedCard[];
   },
+
+  /**
+   * SM-2-lite review. `quality` is 0 (forgot) or 1 (knew it).
+   *  - knew it: ease *= 1.1 (capped 3.5), interval = max(1, prev*ease) days
+   *  - forgot:  ease *= 0.8 (min 1.3), interval = 0 (review again same day)
+   */
+  review(
+    userId: string,
+    cardId: string,
+    quality: 0 | 1,
+  ): { interval_days: number; ease: number; next_due_at: string } | null {
+    const row = db
+      .prepare(
+        `SELECT ease, interval_days FROM generated_cards
+           WHERE id = ? AND user_id = ?`,
+      )
+      .get(cardId, userId) as
+      | { ease: number; interval_days: number }
+      | undefined;
+    if (!row) return null;
+
+    let ease = row.ease;
+    let interval = row.interval_days;
+    if (quality === 1) {
+      ease = Math.min(3.5, Math.max(1.3, ease * 1.1));
+      interval = Math.max(1, Math.round(Math.max(1, interval) * ease));
+    } else {
+      ease = Math.max(1.3, ease * 0.8);
+      interval = 0;
+    }
+
+    const sql =
+      interval === 0
+        ? `UPDATE generated_cards
+             SET ease = ?, interval_days = 0,
+                 next_due_at = datetime('now', '+10 minutes')
+             WHERE id = ? AND user_id = ?
+             RETURNING next_due_at`
+        : `UPDATE generated_cards
+             SET ease = ?, interval_days = ?,
+                 next_due_at = datetime('now', ?)
+             WHERE id = ? AND user_id = ?
+             RETURNING next_due_at`;
+    const params =
+      interval === 0
+        ? [ease, cardId, userId]
+        : [ease, interval, `+${interval} day`, cardId, userId];
+
+    const out = db.prepare(sql).get(...params) as
+      | { next_due_at: string }
+      | undefined;
+    return out
+      ? { interval_days: interval, ease, next_due_at: out.next_due_at }
+      : null;
+  },
+
+  count(userId: string): { total: number; due: number } {
+    const total = (
+      db
+        .prepare("SELECT COUNT(*) AS c FROM generated_cards WHERE user_id = ?")
+        .get(userId) as { c: number }
+    ).c;
+    const due = (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM generated_cards
+             WHERE user_id = ?
+               AND (next_due_at IS NULL OR next_due_at <= datetime('now'))`,
+        )
+        .get(userId) as { c: number }
+    ).c;
+    return { total, due };
+  },
 };

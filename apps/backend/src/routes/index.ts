@@ -255,7 +255,28 @@ apiRouter.post(
 apiRouter.get("/cards/due", (req: Request, res: Response) => {
   const userId = userIdFromRequest(req);
   const limit = Number(req.query.limit ?? 20);
-  res.json({ cards: cards.due(userId, limit) });
+  res.json({ cards: cards.due(userId, limit), stats: cards.count(userId) });
+});
+
+/* ------------------------------------------------------------------ */
+/* POST /api/cards/:id/review                                         */
+/* Records SM-2-lite review feedback. quality: 0 (forgot) | 1 (knew)  */
+/* ------------------------------------------------------------------ */
+const cardReviewSchema = z.object({
+  quality: z.union([z.literal(0), z.literal(1)]),
+});
+
+apiRouter.post("/cards/:id/review", (req: Request, res: Response) => {
+  const userId = userIdFromRequest(req);
+  const cardId = String(req.params.id ?? "");
+  if (!cardId) return res.status(400).json({ error: "missing id" });
+  const parsed = cardReviewSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.message });
+  }
+  const result = cards.review(userId, cardId, parsed.data.quality);
+  if (!result) return res.status(404).json({ error: "card not found" });
+  res.json({ ok: true, ...result });
 });
 
 /* ------------------------------------------------------------------ */

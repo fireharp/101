@@ -25,14 +25,33 @@ See `README.md` → "LOCAL.md spec coverage" for the section-by-section map.
 pnpm install          # one time
 cp apps/backend/.env.example .env   # or place a single .env at the root
 # put OPENAI_API_KEY in .env
+pnpm run doctor       # one-shot environment check (Node/pnpm/env/sqlite/port/playwright)
 pnpm dev              # backend on :4000, frontend on :5173
 ```
+
+`pnpm run doctor` is the fastest way to triage "it doesn't work on my
+machine" — it inspects Node and pnpm versions, the `.env` file and the
+OpenAI key, the better-sqlite3 native binding (the most common breakage
+on fresh clones), DB writability, port availability, Playwright /
+chromium presence, and the drill seed directory. Each check produces a
+single line with a fix hint when it warns or fails.
 
 When in doubt:
 
 ```bash
 pnpm check            # build + tests + offline smokes — same as CI
 ```
+
+Need to start over with a clean drill bank and no accumulated session
+state? After stopping the dev server (Ctrl-C):
+
+```bash
+pnpm dev:reset        # confirms before deleting; wipes SQLite + reseeds from YAML
+pnpm dev:reset --yes  # skip the confirmation
+```
+
+The reset refuses to run while a dev backend is listening on `PORT`
+(default 4000) so you can't wipe the DB out from under a live server.
 
 ## Architecture cheat sheet
 

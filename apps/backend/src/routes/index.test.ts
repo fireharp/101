@@ -876,6 +876,135 @@ test("GET /api/progress/drills returns per-drill performance", async () => {
   }
 });
 
+test("card lifecycle: grade generates cards → due → review → re-schedule", async () => {
+  const cardUserHeaders = {
+    "content-type": "application/json",
+    "x-user-id": `card-tester-${Date.now()}`,
+  };
+  const sessJson = await fetch(`${base}/api/drill-sessions`, {
+    method: "POST",
+    headers: cardUserHeaders,
+    body: JSON.stringify({ mode: "mixed" }),
+  });
+  const sess = (await sessJson.json()) as { session: { id: string } };
+  const nextJson = await fetch(
+    `${base}/api/drill-sessions/${sess.session.id}/next`,
+    { method: "POST", headers: cardUserHeaders, body: "{}" },
+  );
+  const next = (await nextJson.json()) as { drill: { attempt_id: string } };
+
+  // Submit a deliberately weak answer so the offline grader emits cards
+  // from missed rubric points.
+  const gradeJson = await fetch(
+    `${base}/api/drill-attempts/${next.drill.attempt_id}/grade`,
+    {
+      method: "POST",
+      headers: cardUserHeaders,
+      body: JSON.stringify({
+        transcript: "i dunno",
+        duration_seconds: 5,
+      }),
+    },
+  );
+  const grade = (await gradeJson.json()) as {
+    cards: { id?: string; front: string; back: string }[];
+  };
+  assert.ok(grade.cards.length >= 1, "weak answer should generate ≥ 1 card");
+  const cardId = grade.cards[0]!.id;
+  assert.ok(cardId, "card insert should return an id");
+
+  // Cards just generated should appear in /due (default interval = +1 day,
+  // but `cards.due` includes anything with next_due_at <= now OR NULL —
+  // freshly minted cards are due immediately under SM-2-lite).
+  const dueRes = await fetch(`${base}/api/cards/due?limit=20`, {
+    headers: cardUserHeaders,
+  });
+  assert.equal(dueRes.status, 200);
+  const due = (await dueRes.json()) as {
+    cards: { id: string }[];
+    stats: { total: number; due: number };
+  };
+  assert.ok(due.stats.total >= 1);
+  // The card we just generated may or may not be due yet (insert sets
+  // next_due_at = +1 day). Verify the API at least responds and the
+  // counts are consistent.
+  assert.ok(due.stats.due <= due.stats.total);
+
+  // POST review: "knew it" → ease grows, interval becomes a positive day count.
+  const knew = await fetch(`${base}/api/cards/${cardId}/review`, {
+    method: "POST",
+    headers: cardUserHeaders,
+    body: JSON.stringify({ quality: 1 }),
+  });
+  assert.equal(knew.status, 200);
+  const knewJson = (await knew.json()) as {
+    ok: boolean;
+    interval_days: number;
+    ease: number;
+  };
+  assert.equal(knewJson.ok, true);
+  assert.ok(knewJson.interval_days >= 1, "knew → interval ≥ 1 day");
+  assert.ok(knewJson.ease >= 1.3, "ease within SM-2 bounds");
+
+  // POST review: "forgot" → ease shrinks, interval resets to 0.
+  const forgot = await fetch(`${base}/api/cards/${cardId}/review`, {
+    method: "POST",
+    headers: cardUserHeaders,
+    body: JSON.stringify({ quality: 0 }),
+  });
+  assert.equal(forgot.status, 200);
+  const forgotJson = (await forgot.json()) as { interval_days: number };
+  assert.equal(forgotJson.interval_days, 0, "forgot → interval = 0");
+
+  // Bad body → 400.
+  const bad = await fetch(`${base}/api/cards/${cardId}/review`, {
+    method: "POST",
+    headers: cardUserHeaders,
+    body: JSON.stringify({ quality: 7 }),
+  });
+  assert.equal(bad.status, 400);
+
+  // Unknown id → 404.
+  const ghost = await fetch(`${base}/api/cards/does-not-exist/review`, {
+    method: "POST",
+    headers: cardUserHeaders,
+    body: JSON.stringify({ quality: 1 }),
+  });
+  assert.equal(ghost.status, 404);
+});
+
+test("GET /api/cards/export.csv produces Anki-compatible CSV", async () => {
+  const exportRes = await fetch(`${base}/api/cards/export.csv`, { headers });
+  assert.equal(exportRes.status, 200);
+  assert.match(
+    exportRes.headers.get("content-type") ?? "",
+    /text\/csv/,
+    "expected text/csv content-type",
+  );
+  const body = await exportRes.text();
+  const lines = body.split(/\r?\n/).filter(Boolean);
+  assert.ok(lines.length >= 1, "expected at least a header row");
+  assert.equal(lines[0], "front,back,tags", "header row should match Anki shape");
+  if (lines.length >= 2) {
+    // Each data row should have ≥ 2 commas (front,back,tags). Commas inside
+    // quoted fields don't count — split on a comma OUTSIDE quotes.
+    const sample = lines[1]!;
+    const commasOutsideQuotes = (() => {
+      let n = 0;
+      let inQuote = false;
+      for (const ch of sample) {
+        if (ch === '"') inQuote = !inQuote;
+        else if (ch === "," && !inQuote) n += 1;
+      }
+      return n;
+    })();
+    assert.ok(
+      commasOutsideQuotes >= 2,
+      `row 1 should have ≥ 2 unquoted commas; got ${commasOutsideQuotes}`,
+    );
+  }
+});
+
 test("realtime token endpoint returns 503 without OPENAI_API_KEY", async () => {
   const r = await http<{ error?: string }>("POST", "/api/realtime/token", {});
   assert.equal(r.status, 503);

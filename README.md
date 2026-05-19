@@ -44,25 +44,42 @@ for the exact swap path (docker-compose.yml + `migrations/postgres.sql`).
 apps/
   backend/          Express + TypeScript + better-sqlite3
     src/
-      server.ts             entry
+      server.ts             entry; createApp() factory used by route tests
       config.ts             env + paths
+      drill-seed-schema.ts  Zod schema (LOCAL.md §16); shared by seed/import/verify
+      verify-drills.ts      CLI lint: schema + duplicate ids + quality warnings
+      gen-drills.ts         LLM Layer-3 draft generator
+      seed.ts               YAML → DB loader + importDrillsFromYaml
+      seed-templates.ts     Layer-2 template expander
       db/
         migrations.ts       SQLite schema (mirrors LOCAL.md §7)
-        repo.ts             drills, attempts, skill state, cards
-        seed.ts             YAML → DB loader
+        repo.ts             drills, sessions, attempts, events, cards,
+                            skillState, usageEvents
       engines/
-        rotation.ts         LOCAL.md §8 scoring + weighted random
-        grading.ts          LOCAL.md §10 rubric grading (LLM or offline)
+        rotation.ts         LOCAL.md §8 scoring + mock_interview variant
+        grading.ts          LOCAL.md §10 rubric grading (LLM + offline)
       services/
-        realtime.ts         mints OpenAI Realtime ephemeral client secrets
+        realtime.ts         OpenAI Realtime client_secret + tool defs
         llm.ts              OpenAI SDK wrapper
+      resources/            optional resource → drill draft pipeline (CLIs)
       routes/index.ts       REST API (LOCAL.md §12)
+    migrations/postgres.sql Postgres-flavored schema (doc; not the runtime)
     seeds/drills/*.yaml     canonical drill bank (LOCAL.md §16 format)
+    seeds/templates/*.yaml  Layer-2 templates
+    seeds/realtime-prompt.md drill-coach agent prompt (paste into Playground)
   frontend/         React + Vite + TypeScript
     src/
-      App.tsx               mode picker, drill UI, transcript, grade panel
-      useRealtime.ts        WebRTC connection (LOCAL.md §3 Option A)
-      api.ts                fetch wrapper for /api/*
+      App.tsx               drill UI, history, events timeline, admin panels
+      useRealtime.ts        WebRTC + tool dispatch (LOCAL.md §3 / §6)
+      api.ts                fetch wrapper for /api/* (typed clients)
+
+scripts/
+  smoke-all.mjs             every-layer composite + pass/fail table
+  realtime-webrtc-smoke.mjs Playwright + fake-mic realtime smoke harness
+  drill-loop-smoke.mjs      offline REST loop smoke
+  drill-loop-browser-smoke.mjs offline Playwright UI smoke
+  dev-reset.mjs             wipe + reseed local SQLite
+  doctor.mjs                pnpm run doctor — environment diagnostic
 ```
 
 ## Setup
@@ -81,9 +98,16 @@ Open http://localhost:5173.
 Single commands:
 
 ```bash
-pnpm dev:backend   # tsx watch on src/server.ts
-pnpm dev:frontend  # vite
-pnpm --filter @drill/backend seed   # re-seed drills from YAML
+pnpm dev:backend                          # tsx watch on src/server.ts
+pnpm dev:frontend                         # vite
+pnpm --filter @drill/backend seed          # re-seed drills from YAML
+pnpm --filter @drill/backend seed:templates # expand Layer-2 templates
+pnpm --filter @drill/backend gen:drills -- --topic X --count N  # LLM Layer-3 drafts
+pnpm run doctor      # environment diagnostic (Node, pnpm, env, sqlite, ports…)
+pnpm dev:reset       # wipe local SQLite + reseed (refuses while dev is running)
+pnpm verify:drills   # lint seeds/drills/*.yaml against the schema
+pnpm check           # build + tests + offline smokes (CI runs this)
+pnpm smoke:all       # every layer including realtime; ~5 min with OPENAI_API_KEY
 ```
 
 ### Environment variables
@@ -204,10 +228,13 @@ Verdict: `>= 0.80 pass`, `0.60–0.79 borderline`, `< 0.60 fail`.
 | `GET`  | `/api/stats` | drill bank distribution: active vs drafts, by topic / difficulty / trap_type |
 | `GET`  | `/api/sessions` | recent sessions for the user, newest first, with rollup stats (`?limit=N`, default 25) |
 | `POST` | `/api/drills/:id/activate` | promote a draft into the rotation pool |
+| `POST` | `/api/drills/:id/deactivate` | pull a drill back out of the rotation pool (mirror of activate) |
 | `PATCH` | `/api/drills/:id` | edit rubric / canonical answer / difficulty / question text |
 | `POST` | `/api/drills/:id/test-grade` | dry-run grader against a sample answer (no persist) |
 | `DELETE` | `/api/drills/:id` | delete a draft (active drills are protected) |
 | `POST` | `/api/realtime/tool-call` | dispatch for the voice agent's tool calls |
+| `POST` | `/api/realtime/usage` | record token usage from a realtime response (dedupes by `response_id`) |
+| `GET`  | `/api/usage/summary` | aggregated token usage for the user (current session + lifetime totals) |
 | `GET`  | `/api/drill-sessions/:id/summary` | per-session stats (attempts, scores, topics) |
 | `GET`  | `/api/drill-sessions/:id/events` | audit log (LOCAL.md §7 `session_events`) |
 | `POST` | `/api/drill-sessions/:id/end` | mark ended + return summary |

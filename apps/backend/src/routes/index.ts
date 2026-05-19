@@ -281,3 +281,203 @@ apiRouter.get("/drills", (req: Request, res: Response) => {
   });
   res.json({ count: items.length, drills: items });
 });
+
+/* ------------------------------------------------------------------ */
+/* POST /api/realtime/tool-call                                       */
+/* Single dispatch endpoint for the Realtime voice agent.             */
+/* The frontend forwards function_call_arguments.done events here,    */
+/* turns the result into a function_call_output and sends it back     */
+/* over the data channel. Keeps tool-handling logic out of the        */
+/* browser.                                                           */
+/* ------------------------------------------------------------------ */
+const toolCallSchema = z.object({
+  session_id: z.string().min(1),
+  attempt_id: z.string().min(1).optional(),
+  name: z.enum([
+    "get_next_drill",
+    "submit_answer_transcript",
+    "grade_attempt",
+    "save_generated_cards",
+    "get_user_skill_summary",
+    "end_session_summary",
+  ]),
+  arguments: z.record(z.string(), z.unknown()).default({}),
+});
+
+apiRouter.post("/realtime/tool-call", async (req: Request, res: Response) => {
+  const parsed = toolCallSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.message });
+  }
+  const userId = userIdFromRequest(req);
+  const session = sessions.get(parsed.data.session_id);
+  if (!session) return res.status(404).json({ error: "session not found" });
+  if (session.user_id !== userId) {
+    return res.status(403).json({ error: "session not owned by user" });
+  }
+
+  const args = parsed.data.arguments;
+
+  try {
+    switch (parsed.data.name) {
+      case "get_next_drill": {
+        const mode = (typeof args.mode === "string" ? args.mode : session.mode) as Mode;
+        const drill = selectNextDrill({
+          user_id: userId,
+          session_id: session.id,
+          mode,
+          exclude_recent_count: 10,
+        });
+        if (!drill) {
+          return res.json({
+            result: { error: "no drills available" },
+          });
+        }
+        const attempt = attempts.createPending({
+          user_id: userId,
+          session_id: session.id,
+          drill_id: drill.id,
+        });
+        return res.json({
+          result: {
+            attempt_id: attempt.id,
+            drill_id: drill.id,
+            topic: drill.topic,
+            subtopic: drill.subtopic,
+            difficulty: drill.difficulty,
+            question_text: drill.question_text.trim(),
+            expected_answer_shape: drill.rubric.must_have,
+            // Strip rubric details so the model still has to grade against
+            // the user's answer — it should not auto-leak the cheat sheet
+            // before the user attempts. The host app receives full rubric
+            // via the React state pipe.
+          },
+        });
+      }
+
+      case "submit_answer_transcript": {
+        const attemptId = String(args.attempt_id ?? parsed.data.attempt_id ?? "");
+        const transcript = String(args.transcript ?? "");
+        const duration = Number(args.duration_seconds ?? 0);
+        if (!attemptId) return res.json({ result: { error: "attempt_id required" } });
+        const attempt = attempts.get(attemptId);
+        if (!attempt) return res.json({ result: { error: "attempt not found" } });
+        attempts.updateTranscript(attempt.id, transcript, duration);
+        return res.json({ result: { ok: true } });
+      }
+
+      case "grade_attempt": {
+        const attemptId = String(args.attempt_id ?? parsed.data.attempt_id ?? "");
+        if (!attemptId) return res.json({ result: { error: "attempt_id required" } });
+        let attempt = attempts.get(attemptId);
+        if (!attempt) return res.json({ result: { error: "attempt not found" } });
+
+        if (typeof args.transcript === "string" && args.duration_seconds !== undefined) {
+          attempts.updateTranscript(
+            attempt.id,
+            String(args.transcript),
+            Number(args.duration_seconds),
+          );
+          attempt = attempts.get(attempt.id)!;
+        }
+        if (!attempt.transcript) {
+          return res.json({
+            result: { error: "transcript missing — call submit_answer_transcript first" },
+          });
+        }
+        const drill = drills.get(attempt.drill_id);
+        if (!drill) return res.json({ result: { error: "drill not found" } });
+        const grade = await gradeAttempt({
+          drill,
+          transcript: attempt.transcript,
+          duration_seconds: attempt.duration_seconds ?? 0,
+        });
+        const persistedCards = cards.insertMany(attempt.user_id, grade.cards);
+        attempts.updateGrade(attempt.id, {
+          score: grade.score,
+          verdict: grade.verdict,
+          missed_points: grade.missed_points,
+          ideal_answer: grade.ideal_short_answer,
+          created_cards: persistedCards,
+        });
+        skillState.upsertAfterAttempt({
+          user_id: attempt.user_id,
+          topic: drill.topic,
+          subtopic: drill.subtopic,
+          score: grade.score,
+        });
+        return res.json({
+          result: {
+            attempt_id: attempt.id,
+            score: grade.score,
+            verdict: grade.verdict,
+            missed_points: grade.missed_points,
+            ideal_short_answer: grade.ideal_short_answer,
+            cards: persistedCards.map((c) => ({ front: c.front, back: c.back })),
+          },
+        });
+      }
+
+      case "save_generated_cards": {
+        const cardsIn = Array.isArray(args.cards) ? args.cards : [];
+        const saved = cards.insertMany(
+          userId,
+          cardsIn
+            .filter(
+              (c): c is { front: string; back: string; drill_id?: string } =>
+                typeof c === "object" &&
+                c !== null &&
+                typeof (c as { front?: unknown }).front === "string" &&
+                typeof (c as { back?: unknown }).back === "string",
+            )
+            .map((c) => ({
+              front: c.front,
+              back: c.back,
+              drill_id: c.drill_id,
+            })),
+        );
+        return res.json({ result: { saved: saved.length } });
+      }
+
+      case "get_user_skill_summary": {
+        const state = skillState.getAll(userId);
+        return res.json({
+          result: {
+            weakest: state
+              .sort((a, b) => b.weakness_score - a.weakness_score)
+              .slice(0, 5)
+              .map((s) => ({
+                topic: s.topic,
+                subtopic: s.subtopic,
+                weakness_score: s.weakness_score,
+                exposure_count: s.exposure_count,
+              })),
+          },
+        });
+      }
+
+      case "end_session_summary": {
+        sessions.end(session.id);
+        const sessionAttempts = attempts.listForSession(session.id);
+        const graded = sessionAttempts.filter((a) => a.score !== null);
+        const avg =
+          graded.length > 0
+            ? graded.reduce((s, a) => s + (a.score ?? 0), 0) / graded.length
+            : 0;
+        return res.json({
+          result: {
+            drills_attempted: sessionAttempts.length,
+            average_score: Math.round(avg * 1000) / 1000,
+            passes: graded.filter((a) => a.verdict === "pass").length,
+            borderlines: graded.filter((a) => a.verdict === "borderline").length,
+            fails: graded.filter((a) => a.verdict === "fail").length,
+          },
+        });
+      }
+    }
+  } catch (err) {
+    return res
+      .status(500)
+      .json({ result: { error: (err as Error).message } });
+  }
+});

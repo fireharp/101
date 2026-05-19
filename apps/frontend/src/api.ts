@@ -127,4 +127,20 @@ export const api = {
         exposure_count: number;
       }[];
     }>("/api/progress"),
+
+  toolCall: (
+    sessionId: string,
+    name: string,
+    args: Record<string, unknown>,
+    userId?: string,
+  ) =>
+    jsonFetch<{ result: Record<string, unknown> }>("/api/realtime/tool-call", {
+      method: "POST",
+      headers: userId ? { "x-user-id": userId } : {},
+      body: JSON.stringify({
+        session_id: sessionId,
+        name,
+        arguments: args,
+      }),
+    }).then((r) => r.result),
 };

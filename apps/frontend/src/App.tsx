@@ -85,6 +85,75 @@ export function App() {
     return Math.max(1, Math.round((Date.now() - start) / 1000));
   }, []);
 
+  // Register the Realtime tool handler. When the agent calls a backend
+  // tool, we proxy to /api/realtime/tool-call and mirror agent-driven
+  // results into local state (so the UI follows the agent's lead).
+  useEffect(() => {
+    if (!session) {
+      realtime.setToolHandler(null);
+      return;
+    }
+    realtime.setToolHandler(async (call) => {
+      const result = await api.toolCall(
+        session.id,
+        call.name,
+        call.arguments,
+        session.user_id,
+      );
+      if (call.name === "get_next_drill" && !result.error) {
+        const driven: DrillPayload = {
+          drill_id: String(result.drill_id ?? ""),
+          attempt_id: String(result.attempt_id ?? ""),
+          question_text: String(result.question_text ?? ""),
+          topic: String(result.topic ?? ""),
+          subtopic: String(result.subtopic ?? ""),
+          difficulty: Number(result.difficulty ?? 0),
+          expected_answer_shape: Array.isArray(result.expected_answer_shape)
+            ? (result.expected_answer_shape as string[])
+            : [],
+          rubric: {
+            must_have: Array.isArray(result.expected_answer_shape)
+              ? (result.expected_answer_shape as string[])
+              : [],
+            nice_to_have: [],
+            red_flags: [],
+          },
+        };
+        pushedVoiceDrillRef.current = driven.attempt_id;
+        setDrill(driven);
+        setGrade(null);
+        setTranscript("");
+        startTimer();
+      }
+      if (call.name === "grade_attempt" && !result.error) {
+        const cardsOut = Array.isArray(result.cards)
+          ? (result.cards as { front: string; back: string }[])
+          : [];
+        setGrade({
+          attempt_id: String(result.attempt_id ?? ""),
+          score: Number(result.score ?? 0),
+          verdict:
+            (result.verdict as "pass" | "borderline" | "fail" | undefined) ??
+            "fail",
+          missed_points: Array.isArray(result.missed_points)
+            ? (result.missed_points as string[])
+            : [],
+          ideal_short_answer: String(result.ideal_short_answer ?? ""),
+          cards: cardsOut,
+          breakdown: {
+            must_have_coverage: 0,
+            answer_clarity: 0,
+            tradeoff_coverage: 0,
+            speed_score: 0,
+            red_flag_penalty: 0,
+          },
+        });
+      }
+      return result;
+    });
+    return () => realtime.setToolHandler(null);
+  }, [realtime.setToolHandler, session, startTimer]);
+
   const onStart = useCallback(async () => {
     setError(null);
     setGrade(null);
@@ -186,7 +255,9 @@ export function App() {
               <span className="tag">difficulty {drill.difficulty}</span>
               <span className="timer">⏱ {formatTime(elapsed)}</span>
             </div>
-            <div className="question">{drill.question_text.trim()}</div>
+            <div data-testid="question" className="question">
+              {drill.question_text.trim()}
+            </div>
 
             <div
               className="row"
@@ -210,10 +281,19 @@ export function App() {
                     ? "Connecting..."
                     : "Start voice"}
               </button>
-              <button onClick={onSubmit} disabled={grading} className="primary">
+              <button
+                data-testid="submit-answer"
+                onClick={onSubmit}
+                disabled={grading}
+                className="primary"
+              >
                 {grading ? "Grading…" : "Submit answer"}
               </button>
-              <button onClick={onNext} disabled={grading}>
+              <button
+                data-testid="next-drill"
+                onClick={onNext}
+                disabled={grading}
+              >
                 Next drill
               </button>
             </div>
@@ -257,9 +337,13 @@ export function App() {
         )}
         {grade && (
           <>
-            <div className="scoreline">
-              <span className="score">{Math.round(grade.score * 100)}</span>
-              <span className={verdictClass}>{grade.verdict}</span>
+            <div className="scoreline" data-testid="grade-panel">
+              <span className="score" data-testid="grade-score">
+                {Math.round(grade.score * 100)}
+              </span>
+              <span className={verdictClass} data-testid="grade-verdict">
+                {grade.verdict}
+              </span>
             </div>
             <p className="muted" style={{ marginTop: "0.2rem" }}>
               must-have {(grade.breakdown.must_have_coverage * 100).toFixed(0)}% ·

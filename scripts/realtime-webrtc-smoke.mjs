@@ -85,7 +85,32 @@ async function main() {
     const transcriptLength = (
       await page.getByTestId("transcript").inputValue()
     ).trim().length;
+
+    // Give the agent a moment to fire tool calls after the user audio
+    // ends — these typically arrive in the seconds after
+    // `input_audio_buffer.speech_stopped`.
+    const toolWaitMs = Number(process.env.REALTIME_SMOKE_TOOL_WAIT_MS ?? 20000);
+    await page
+      .waitForFunction(
+        () => {
+          const events = window.__drillRealtimeDebug?.events ?? [];
+          return events.some(
+            (e) =>
+              e.type === "response.function_call_arguments.done" ||
+              e.type === "tool_call.handled",
+          );
+        },
+        undefined,
+        { timeout: toolWaitMs },
+      )
+      .catch(() => {
+        /* tool call is best-effort; the smoke still passes if it didn't happen */
+      });
+
     const debug = await page.evaluate(() => window.__drillRealtimeDebug);
+    const toolCalls = (debug?.events ?? []).filter(
+      (e) => e.type === "tool_call.handled",
+    );
     const screenshot = path.join(
       os.tmpdir(),
       `realtime-webrtc-smoke-${Date.now()}.png`,
@@ -102,7 +127,9 @@ async function main() {
           transcriptLength,
           debugStatus: debug?.status ?? null,
           debugErrors: debug?.errors ?? [],
-          recentEventTypes: (debug?.events ?? []).map((event) => event.type).slice(-20),
+          toolCallCount: toolCalls.length,
+          toolNames: [...new Set(toolCalls.map((e) => e.state))].filter(Boolean),
+          recentEventTypes: (debug?.events ?? []).map((event) => event.type).slice(-25),
           screenshot,
           consoleMessages,
           failures,

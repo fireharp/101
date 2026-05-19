@@ -191,21 +191,39 @@ curl -s -X POST localhost:4000/api/drill-attempts/$ATT/grade \
   -d '{"transcript":"composite B-tree on (category_id, price), equality then order, verify with EXPLAIN ANALYZE","duration_seconds":45}' | jq
 ```
 
-## Realtime WebRTC smoke
+## Testing & smoke
+
+Three layers, fastest to slowest:
+
+| Layer | Command | What it proves |
+| --- | --- | --- |
+| Unit tests | `pnpm -r test` | rotation engine selection rules, offline grader scoring, red-flag penalty, card generation. No network. |
+| REST drill loop | `pnpm smoke:drill-loop` | end-to-end loop over HTTP for N drills with the offline grader — verifies rotation produces variety, weakness state moves, mixed verdicts. Boots its own backend on an isolated DB. |
+| Browser drill loop | `pnpm smoke:browser` | exercises App.tsx in Chromium (no mic): Start → type answer → Submit → grade panel renders → Next drill → question changes. |
+| Realtime WebRTC | `pnpm smoke:realtime` | full voice path: launches Chromium with `--use-file-for-fake-audio-capture` against a Mumbli WAV, asserts the model connects and ASR transcript appears. Requires `OPENAI_API_KEY`. |
+
+Run everything:
 
 ```bash
-pnpm smoke:realtime
+pnpm -r test                # unit
+pnpm smoke:drill-loop       # offline REST loop
+pnpm smoke:browser          # offline browser loop
+pnpm smoke:realtime         # online realtime
 ```
 
-The smoke starts local servers if needed, launches Chromium with a fake
-microphone, feeds the latest usable Mumbli WAV via
-`--use-file-for-fake-audio-capture`, and passes when the textarea receives a
-non-empty input transcript. It reports transcript length and a screenshot path,
-but does not print the transcript text.
-
-Useful overrides:
+### Useful overrides
 
 ```bash
+# point smokes at an already-running stack instead of starting one
+USE_EXISTING_BACKEND=1 USE_EXISTING_FRONTEND=1 pnpm smoke:browser
+
+# specific Mumbli WAV (otherwise picks the latest >32 KB)
 REALTIME_SMOKE_AUDIO="/absolute/path/sample.wav" pnpm smoke:realtime
+
+# show the browser
 HEADLESS=0 pnpm smoke:realtime
 ```
+
+The realtime smoke output includes a screenshot path and a tail of recent
+Realtime server events so you can confirm `response.output_audio.done`,
+`input_audio_buffer.speech_stopped`, and transcription deltas all arrived.

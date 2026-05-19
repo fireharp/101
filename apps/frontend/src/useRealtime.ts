@@ -28,7 +28,32 @@ type RealtimeServerEvent = {
   transcript?: string;
   delta?: string;
   error?: { message?: string };
+  // Function-call events (LOCAL.md §6 tool protocol).
+  // `name` is reliably present on `response.output_item.{added,done}` when
+  // item.type=function_call. `response.function_call_arguments.done` may
+  // omit it depending on API version, so we track the (item_id → name)
+  // mapping ourselves.
+  call_id?: string;
+  name?: string;
+  arguments?: string;
+  item?: {
+    id?: string;
+    type?: string;
+    name?: string;
+    call_id?: string;
+    arguments?: string;
+  };
 };
+
+export type RealtimeToolCall = {
+  name: string;
+  call_id: string;
+  arguments: Record<string, unknown>;
+};
+
+export type RealtimeToolHandler = (
+  call: RealtimeToolCall,
+) => Promise<Record<string, unknown>>;
 
 type RealtimeDebugEvent = {
   type: string;
@@ -43,6 +68,7 @@ type RealtimeDebug = {
   status: string;
   events: RealtimeDebugEvent[];
   errors: string[];
+  rawFunctionCallEvents?: unknown[];
 };
 
 declare global {
@@ -60,6 +86,7 @@ export interface RealtimeHandle {
   audioEl: React.RefObject<HTMLAudioElement | null>;
   send: (event: Record<string, unknown>) => void;
   pushDrill: (question: string) => void;
+  setToolHandler: (handler: RealtimeToolHandler | null) => void;
 }
 
 export function useRealtime(): RealtimeHandle {
@@ -72,6 +99,14 @@ export function useRealtime(): RealtimeHandle {
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const transcriptItemsRef = useRef<Map<string, string>>(new Map());
+  const toolHandlerRef = useRef<RealtimeToolHandler | null>(null);
+  const pendingFunctionCallsRef = useRef<
+    Map<string, { name: string; call_id: string; dispatched: boolean }>
+  >(new Map());
+
+  const setToolHandler = useCallback((handler: RealtimeToolHandler | null) => {
+    toolHandlerRef.current = handler;
+  }, []);
 
   const send = useCallback((event: Record<string, unknown>) => {
     const dc = dcRef.current;
@@ -230,6 +265,28 @@ export function useRealtime(): RealtimeHandle {
             recordDebugError(ev.error?.message ?? "Realtime server error");
           }
           handleEvent(ev, transcriptItemsRef, setTranscript);
+          if (
+            ev.type &&
+            (ev.type === "response.output_item.added" ||
+              ev.type === "response.output_item.done" ||
+              ev.type === "response.function_call_arguments.done")
+          ) {
+            const debug = getDebug();
+            debug.rawFunctionCallEvents ??= [];
+            debug.rawFunctionCallEvents.push(ev);
+            if (debug.rawFunctionCallEvents.length > 20) {
+              debug.rawFunctionCallEvents.splice(
+                0,
+                debug.rawFunctionCallEvents.length - 20,
+              );
+            }
+          }
+          handleFunctionCallEvent(
+            ev,
+            pendingFunctionCallsRef,
+            toolHandlerRef.current,
+            send,
+          );
         } catch {
           /* non-JSON, ignore */
         }
@@ -282,7 +339,123 @@ export function useRealtime(): RealtimeHandle {
     audioEl: audioElRef,
     send,
     pushDrill,
+    setToolHandler,
   };
+}
+
+/**
+ * Resolve the (call_id, name) → arguments → dispatch flow across the
+ * several events the GA Realtime API splits a function call into:
+ *
+ *   response.output_item.added   { item: { type: "function_call", name, call_id } }
+ *   response.function_call_arguments.delta  { item_id, delta }
+ *   response.function_call_arguments.done   { item_id, call_id, arguments }
+ *   response.output_item.done    { item: { type: "function_call", call_id, arguments } }
+ *
+ * Some payloads carry the function name only on `output_item.*`, so we
+ * track (item_id → { name, call_id }) and dispatch on the first event that
+ * gives us complete arguments.
+ */
+function handleFunctionCallEvent(
+  ev: RealtimeServerEvent,
+  pendingRef: {
+    current: Map<string, { name: string; call_id: string; dispatched: boolean }>;
+  },
+  handler: RealtimeToolHandler | null,
+  send: (event: Record<string, unknown>) => void,
+): void {
+  if (
+    ev.type === "response.output_item.added" &&
+    ev.item?.type === "function_call" &&
+    ev.item.id &&
+    ev.item.name &&
+    ev.item.call_id
+  ) {
+    pendingRef.current.set(ev.item.id, {
+      name: ev.item.name,
+      call_id: ev.item.call_id,
+      dispatched: false,
+    });
+    return;
+  }
+
+  if (ev.type === "response.function_call_arguments.done" && ev.item_id) {
+    const pending = pendingRef.current.get(ev.item_id);
+    const name = pending?.name ?? ev.name;
+    const callId = pending?.call_id ?? ev.call_id;
+    if (!name || !callId) return;
+    if (pending?.dispatched) return;
+    if (pending) pending.dispatched = true;
+    void runToolCall(
+      {
+        name,
+        call_id: callId,
+        arguments: safeParseArgs(ev.arguments),
+      },
+      handler,
+      send,
+    );
+    return;
+  }
+
+  if (
+    ev.type === "response.output_item.done" &&
+    ev.item?.type === "function_call" &&
+    ev.item.id &&
+    ev.item.name &&
+    ev.item.call_id
+  ) {
+    const pending = pendingRef.current.get(ev.item.id);
+    if (pending?.dispatched) return;
+    if (pending) pending.dispatched = true;
+    void runToolCall(
+      {
+        name: ev.item.name,
+        call_id: ev.item.call_id,
+        arguments: safeParseArgs(ev.item.arguments),
+      },
+      handler,
+      send,
+    );
+  }
+}
+
+function safeParseArgs(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+async function runToolCall(
+  call: RealtimeToolCall,
+  handler: RealtimeToolHandler | null,
+  send: (event: Record<string, unknown>) => void,
+): Promise<void> {
+  let output: Record<string, unknown>;
+  try {
+    output = handler
+      ? await handler(call)
+      : { error: "no tool handler registered on client" };
+  } catch (err) {
+    output = { error: (err as Error).message };
+  }
+  recordDebugEvent("tool_call.handled", {
+    state: call.name,
+    deltaLength: JSON.stringify(output).length,
+  });
+  send({
+    type: "conversation.item.create",
+    item: {
+      type: "function_call_output",
+      call_id: call.call_id,
+      output: JSON.stringify(output),
+    },
+  });
+  send({ type: "response.create" });
 }
 
 function handleEvent(

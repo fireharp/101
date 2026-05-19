@@ -10,7 +10,8 @@
     "dev:backend": "pnpm --filter @drill/backend dev",
     "dev:frontend": "pnpm --filter @drill/frontend dev",
     "smoke:realtime": "node scripts/realtime-webrtc-smoke.mjs",
-    "smoke:drill-loop": "node scripts/drill-loop-smoke.mjs"
+    "smoke:drill-loop": "node scripts/drill-loop-smoke.mjs",
+    "smoke:browser": "node scripts/drill-loop-browser-smoke.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

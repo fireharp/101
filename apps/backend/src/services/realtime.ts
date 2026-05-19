@@ -58,6 +58,12 @@ export async function mintRealtimeClientSecret(opts: {
     session.instructions = opts.instructions;
   }
 
+  // LOCAL.md §6 tools. We attach them at the session level so the agent
+  // can drive the drill loop itself, regardless of whether a Playground
+  // prompt is configured (session.tools merges with prompt.tools).
+  session.tools = DRILL_COACH_TOOLS;
+  session.tool_choice = "auto";
+
   const body = { session };
 
   const resp = await fetch(
@@ -108,6 +114,109 @@ export async function mintRealtimeClientSecret(opts: {
     voice: opts.voice ?? config.realtimeVoice,
   };
 }
+
+export const DRILL_COACH_TOOLS = [
+  {
+    type: "function",
+    name: "get_next_drill",
+    description:
+      "Pick the next drill question from the curriculum. Call this at the start of every drill turn before asking the user.",
+    parameters: {
+      type: "object",
+      properties: {
+        mode: {
+          type: "string",
+          enum: [
+            "mixed",
+            "db_indexes",
+            "system_design",
+            "weak_topics",
+            "mock_interview",
+          ],
+          description:
+            "Optional. Filter the drill pool. Defaults to the session's mode.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    type: "function",
+    name: "submit_answer_transcript",
+    description:
+      "Persist the user's spoken-answer transcript and how long they took. Call after the user has answered, before grading.",
+    parameters: {
+      type: "object",
+      properties: {
+        attempt_id: {
+          type: "string",
+          description:
+            "The attempt id returned from the most recent get_next_drill call.",
+        },
+        transcript: { type: "string" },
+        duration_seconds: { type: "integer", minimum: 0, maximum: 1800 },
+      },
+      required: ["attempt_id", "transcript", "duration_seconds"],
+    },
+  },
+  {
+    type: "function",
+    name: "grade_attempt",
+    description:
+      "Grade the user's answer against the drill rubric. Returns score, verdict, missed points, ideal short answer, and follow-up cards.",
+    parameters: {
+      type: "object",
+      properties: {
+        attempt_id: { type: "string" },
+        transcript: {
+          type: "string",
+          description:
+            "Optional inline transcript. If omitted, the server uses the transcript already persisted via submit_answer_transcript.",
+        },
+        duration_seconds: { type: "integer", minimum: 0, maximum: 1800 },
+      },
+      required: ["attempt_id"],
+    },
+  },
+  {
+    type: "function",
+    name: "save_generated_cards",
+    description:
+      "(Optional) Persist additional review cards generated during the explain-and-repeat phase. The default grade_attempt flow already saves cards from the rubric; only call this for extra cards you want to add.",
+    parameters: {
+      type: "object",
+      properties: {
+        cards: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              front: { type: "string" },
+              back: { type: "string" },
+              drill_id: { type: "string" },
+            },
+            required: ["front", "back"],
+          },
+        },
+      },
+      required: ["cards"],
+    },
+  },
+  {
+    type: "function",
+    name: "get_user_skill_summary",
+    description:
+      "Read the user's per-topic weakness scores so you can adapt the next drill. Use sparingly.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+  {
+    type: "function",
+    name: "end_session_summary",
+    description:
+      "End the current drill session and return aggregate stats. Call only when the user says 'stop' or 'end session'.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+] as const;
 
 export const DRILL_COACH_INSTRUCTIONS = `You are a strict staff-level interview drill coach.
 

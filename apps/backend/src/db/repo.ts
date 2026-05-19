@@ -336,7 +336,69 @@ export const users = {
   },
 };
 
+export interface DrillPerformance {
+  drill_id: string;
+  topic: string;
+  subtopic: string;
+  difficulty: number;
+  question_text: string;
+  attempts: number;
+  graded: number;
+  avg_score: number;
+  best_score: number;
+  worst_score: number;
+  last_seen_at: string | null;
+  last_score: number | null;
+  last_verdict: string | null;
+}
+
 export const attempts = {
+  /**
+   * Per-drill performance for a user. Joins drill_attempts → drill_items so
+   * the UI can show which specific drills consistently underperform.
+   * Filters to drills with at least one graded attempt.
+   */
+  performanceByDrill(userId: string, limit = 50): DrillPerformance[] {
+    return db
+      .prepare(
+        `SELECT
+           d.id              AS drill_id,
+           d.topic           AS topic,
+           d.subtopic        AS subtopic,
+           d.difficulty      AS difficulty,
+           d.question_text   AS question_text,
+           COUNT(a.id)       AS attempts,
+           SUM(a.score IS NOT NULL) AS graded,
+           AVG(a.score)      AS avg_score,
+           MAX(a.score)      AS best_score,
+           MIN(a.score)      AS worst_score,
+           MAX(a.created_at) AS last_seen_at,
+           (
+             SELECT a2.score
+               FROM drill_attempts a2
+              WHERE a2.user_id = ? AND a2.drill_id = d.id
+                AND a2.score IS NOT NULL
+              ORDER BY a2.created_at DESC
+              LIMIT 1
+           ) AS last_score,
+           (
+             SELECT a2.verdict
+               FROM drill_attempts a2
+              WHERE a2.user_id = ? AND a2.drill_id = d.id
+                AND a2.score IS NOT NULL
+              ORDER BY a2.created_at DESC
+              LIMIT 1
+           ) AS last_verdict
+         FROM drill_items d
+         JOIN drill_attempts a ON a.drill_id = d.id AND a.user_id = ?
+         WHERE a.score IS NOT NULL
+         GROUP BY d.id
+         ORDER BY avg_score ASC, attempts DESC
+         LIMIT ?`,
+      )
+      .all(userId, userId, userId, limit) as DrillPerformance[];
+  },
+
   createPending(opts: {
     user_id: string;
     session_id: string;

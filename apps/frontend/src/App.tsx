@@ -116,6 +116,19 @@ export function App() {
     by_difficulty: { difficulty: number; active: number; drafts: number }[];
     by_trap_type: { trap_type: string; count: number }[];
   } | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [recentSessions, setRecentSessions] = useState<
+    | {
+        id: string;
+        mode: Mode;
+        started_at: string;
+        ended_at: string | null;
+        drills_attempted: number;
+        drills_graded: number;
+        average_score: number;
+      }[]
+    | null
+  >(null);
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [ending, setEnding] = useState(false);
   const [drillCount, setDrillCount] = useState(0);
@@ -798,6 +811,98 @@ export function App() {
     }
   }, [drafts, refreshDrafts]);
 
+  const onToggleHistory = useCallback(async () => {
+    setHistoryOpen((v) => !v);
+    try {
+      const r = await api.recentSessions(25);
+      setRecentSessions(r.sessions);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, []);
+
+  const onLoadHistorySession = useCallback(async (sessionId: string) => {
+    try {
+      const sum = await api.sessionSummary(sessionId);
+      setSummary(sum);
+      setHistoryOpen(false);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, []);
+
+  // Resume an unfinished past session: restore it as the current session,
+  // re-anchor the localStorage bookmark, find or create an in-progress
+  // drill, and close the history panel.
+  const onResumeHistorySession = useCallback(
+    async (sessionId: string, sessionMode: Mode) => {
+      try {
+        const sum = await api.sessionSummary(sessionId);
+        if (sum.ended_at) {
+          // Defensive: history list might be stale; if it ended in the
+          // meantime, fall back to summary view.
+          setSummary(sum);
+          setHistoryOpen(false);
+          return;
+        }
+        setSession({ id: sum.session_id, user_id: "demo-user", mode: sum.mode });
+        setMode(sum.mode);
+        window.localStorage.setItem(
+          SESSION_STORAGE_KEY,
+          JSON.stringify({
+            session_id: sum.session_id,
+            mode: sum.mode,
+            pressure_mode: pressureMode,
+          }),
+        );
+
+        const openAttempt = sum.attempts
+          .slice()
+          .reverse()
+          .find((a) => a.score === null);
+        if (openAttempt) {
+          const bank = await api.drills();
+          const item = bank.drills.find(
+            (d) => d.id === openAttempt.drill_id,
+          );
+          if (item) {
+            setDrill({
+              drill_id: item.id,
+              attempt_id: openAttempt.attempt_id,
+              question_text: item.question_text,
+              topic: item.topic,
+              subtopic: item.subtopic,
+              difficulty: item.difficulty,
+              expected_answer_shape: item.rubric.must_have,
+              rubric: item.rubric,
+            });
+            setDrillCount(sum.drills_attempted);
+            setGrade(null);
+            setTranscript("");
+            setSummary(null);
+            setHistoryOpen(false);
+            startTimer();
+            return;
+          }
+        }
+        // No open attempt — pull a fresh drill.
+        const d = await api.nextDrill(sum.session_id, sum.mode);
+        setDrill(d);
+        setDrillCount(sum.drills_attempted + 1);
+        setGrade(null);
+        setTranscript("");
+        setSummary(null);
+        setHistoryOpen(false);
+        startTimer();
+        // Avoid unused-arg warning when sessionMode wasn't needed.
+        void sessionMode;
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [pressureMode, startTimer],
+  );
+
   const onActivateDraft = useCallback(
     async (id: string) => {
       try {
@@ -1052,6 +1157,17 @@ export function App() {
               {eventsOpen ? "Hide" : "Show"} events
             </button>
           )}
+          <button
+            data-testid="toggle-history"
+            onClick={onToggleHistory}
+            style={{ padding: "0.35rem 0.6rem", fontSize: "0.85rem" }}
+            title="Past sessions"
+          >
+            {historyOpen ? "Hide" : "Show"} history
+            {recentSessions && recentSessions.length > 0
+              ? ` (${recentSessions.length})`
+              : ""}
+          </button>
         </div>
       </header>
 
@@ -2037,6 +2153,144 @@ export function App() {
                 </div>
               ))}
           </div>
+        </section>
+      )}
+
+      {historyOpen && (
+        <section
+          className="panel"
+          data-testid="history-panel"
+          style={{ gridColumn: "1 / -1" }}
+        >
+          <div className="row" style={{ marginBottom: "0.4rem" }}>
+            <h2 style={{ margin: 0 }}>
+              Past sessions{" "}
+              <span
+                className="muted"
+                style={{ fontWeight: 400, fontSize: "0.85rem" }}
+              >
+                ({recentSessions?.length ?? "…"})
+              </span>
+            </h2>
+            <span
+              className="muted"
+              style={{ marginLeft: "auto", fontSize: "0.78rem" }}
+            >
+              Click a row to view its summary.
+            </span>
+          </div>
+          {!recentSessions ? (
+            <p className="muted" style={{ margin: 0 }}>
+              Loading…
+            </p>
+          ) : recentSessions.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>
+              No past sessions yet. Start one above.
+            </p>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gap: "0.3rem",
+                fontSize: "0.82rem",
+              }}
+            >
+              {recentSessions.map((s, i) => {
+                const started = new Date(s.started_at);
+                const finished = s.ended_at
+                  ? new Date(s.ended_at)
+                  : null;
+                const durationMin =
+                  finished
+                    ? Math.max(
+                        0,
+                        Math.round(
+                          (finished.getTime() - started.getTime()) / 60000,
+                        ),
+                      )
+                    : null;
+                const avgPct = Math.round(s.average_score * 100);
+                const isOpen = !finished;
+                return (
+                  <div
+                    key={s.id}
+                    data-testid="history-row"
+                    style={{
+                      padding: "0.4rem 0.55rem",
+                      background: i % 2 === 0 ? "#0a0c12" : "transparent",
+                      border: "1px solid var(--border)",
+                      borderRadius: 6,
+                      display: "grid",
+                      gridTemplateColumns:
+                        "auto auto 1fr auto auto auto auto",
+                      alignItems: "center",
+                      gap: "0.6rem",
+                      color: "inherit",
+                    }}
+                  >
+                    <span className="muted" style={{ fontVariantNumeric: "tabular-nums" }}>
+                      {started.toLocaleString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                    <span className="tag">{s.mode}</span>
+                    <span className="muted">
+                      {s.drills_graded}/{s.drills_attempted} graded
+                      {durationMin !== null && ` · ${durationMin}m`}
+                    </span>
+                    <span
+                      className="tag"
+                      style={{
+                        background:
+                          avgPct >= 80
+                            ? "var(--good)"
+                            : avgPct >= 60
+                              ? "var(--warn)"
+                              : "transparent",
+                        color: avgPct >= 60 ? "#0c1220" : "inherit",
+                      }}
+                    >
+                      avg {avgPct}
+                    </span>
+                    <span
+                      className="muted"
+                      style={{ fontSize: "0.72rem" }}
+                    >
+                      {isOpen ? "open" : "ended"}
+                    </span>
+                    {isOpen ? (
+                      <button
+                        data-testid="resume-history-row"
+                        onClick={() => onResumeHistorySession(s.id, s.mode)}
+                        className="primary"
+                        style={{
+                          padding: "0.18rem 0.45rem",
+                          fontSize: "0.72rem",
+                        }}
+                      >
+                        Resume
+                      </button>
+                    ) : (
+                      <span style={{ width: 1 }} aria-hidden="true" />
+                    )}
+                    <button
+                      data-testid="view-history-row"
+                      onClick={() => onLoadHistorySession(s.id)}
+                      style={{
+                        padding: "0.18rem 0.45rem",
+                        fontSize: "0.72rem",
+                      }}
+                    >
+                      Summary
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </section>
       )}
 

@@ -658,6 +658,17 @@ apiRouter.get("/progress", (req: Request, res: Response) => {
 });
 
 /* ------------------------------------------------------------------ */
+/* GET /api/progress/drills                                           */
+/* Per-drill performance for the current user (lowest avg first), so  */
+/* the UI can show which specific drills consistently underperform.   */
+/* ------------------------------------------------------------------ */
+apiRouter.get("/progress/drills", (req: Request, res: Response) => {
+  const userId = userIdFromRequest(req);
+  const limit = Math.max(1, Math.min(200, Number(req.query.limit ?? 50)));
+  res.json({ drills: attempts.performanceByDrill(userId, limit) });
+});
+
+/* ------------------------------------------------------------------ */
 /* GET /api/drills                                                    */
 /* Browse/admin view of the drill bank.                               */
 /* ------------------------------------------------------------------ */

@@ -196,6 +196,7 @@ Verdict: `>= 0.80 pass`, `0.60–0.79 borderline`, `< 0.60 fail`.
 | `GET`  | `/api/drills/export.yaml` | dump active drills as YAML (seed format); `?include_drafts=1` to include drafts |
 | `POST` | `/api/drills/import` | upsert drills from YAML body (or `{ yaml: "…" }`); 207 with per-item errors when partial |
 | `GET`  | `/api/stats` | drill bank distribution: active vs drafts, by topic / difficulty / trap_type |
+| `GET`  | `/api/sessions` | recent sessions for the user, newest first, with rollup stats (`?limit=N`, default 25) |
 | `POST` | `/api/drills/:id/activate` | promote a draft into the rotation pool |
 | `PATCH` | `/api/drills/:id` | edit rubric / canonical answer / difficulty / question text |
 | `POST` | `/api/drills/:id/test-grade` | dry-run grader against a sample answer (no persist) |

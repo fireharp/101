@@ -123,6 +123,21 @@ if (env.OPENAI_REALTIME_PROMPT_ID) {
     "(unset — local DRILL_COACH_INSTRUCTIONS fallback in use)",
   );
 }
+// Effective grader mode — mirrors `config.useOfflineGrader` resolution:
+// USE_OFFLINE_GRADER=1 forces offline regardless of key, otherwise key
+// presence picks the live LLM grader.
+{
+  const forcedOffline = env.USE_OFFLINE_GRADER === "1";
+  const hasKey = !!env.OPENAI_API_KEY;
+  if (forcedOffline) {
+    record("ok", "grader", "offline (USE_OFFLINE_GRADER=1)");
+  } else if (hasKey) {
+    const model = env.OPENAI_GRADING_MODEL || "gpt-4.1-mini";
+    record("ok", "grader", `live LLM (${model})`);
+  } else {
+    record("ok", "grader", "offline (no OPENAI_API_KEY)");
+  }
+}
 
 // ── better-sqlite3 native binding ───────────────────────────────────
 try {
@@ -271,7 +286,24 @@ const seedDir = path.join(repoRoot, "apps/backend/seeds/drills");
 if (fs.existsSync(seedDir)) {
   const files = fs.readdirSync(seedDir).filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"));
   if (files.length > 0) {
-    record("ok", "drill seeds", `${files.length} YAML files`);
+    // Cheap line-based scan — counts entries (`- id:`) and unique topics
+    // (`  topic: …`). Keeps doctor.mjs dependency-free; verify:drills runs
+    // the full Zod schema lint when you need real validation.
+    let drillCount = 0;
+    const topics = new Set();
+    for (const f of files) {
+      const text = fs.readFileSync(path.join(seedDir, f), "utf8");
+      for (const line of text.split("\n")) {
+        if (/^- id:/.test(line)) drillCount += 1;
+        const m = line.match(/^  topic:\s*([\w-]+)/);
+        if (m) topics.add(m[1]);
+      }
+    }
+    record(
+      "ok",
+      "drill seeds",
+      `${files.length} YAML files · ${drillCount} drills · ${topics.size} topics`,
+    );
   } else {
     record(
       "warn",

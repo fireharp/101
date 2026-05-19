@@ -51,6 +51,13 @@ audit into one command.
   covering the four explicit return paths (parse failure, empty
   document, single-object wrap, mixed valid+invalid partial success).
   Pushed import edge-case coverage down from HTTP to direct unit.
+- **`apps/frontend/src/api.test.ts`** — first frontend test file.
+  Covers `ApiError` extraction of OpenAI metadata (request id, status,
+  retryable, retry-after) and the requestId fallback chain
+  (`opts.requestId` → `payload.request_id` → `null`). Runs under
+  `tsx --test` via `pnpm -r test` so it's part of every CI run. Test
+  files are excluded from `tsc -b` to keep React build free of Node
+  types.
 - **CI** — `.github/workflows/ci.yml` runs `smoke:all --offline-only`
   on every PR; `.github/workflows/realtime-smoke.yml` runs the
   realtime tiers daily via cron + on push to voice-related files.

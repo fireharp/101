@@ -23,7 +23,7 @@ const offlineSteps = [
     cmd: ["pnpm", "verify:drills", "--", "--strict"],
   },
   { name: "build", cmd: ["pnpm", "build"] },
-  { name: "test (unit + route)", cmd: ["pnpm", "test"] },
+  { name: "test (backend unit + route, frontend pure)", cmd: ["pnpm", "test"] },
   { name: "smoke:drill-loop", cmd: ["pnpm", "smoke:drill-loop"] },
   {
     name: "smoke:browser",

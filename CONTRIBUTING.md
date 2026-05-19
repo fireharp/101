@@ -86,6 +86,7 @@ engines/
 | --- | --- | --- |
 | YAML drill linter | `pnpm verify:drills` | Every PR via CI. Validates `seeds/drills/*.yaml` against the seed schema; flags duplicate ids; warns on quality smells (empty rubric, tiny canonical answer, terse question). Pass `-- --strict` to fail on warnings. |
 | Backend unit + route | `pnpm -r test` | Every PR via CI. `node:test` + Express on an ephemeral port. |
+| Frontend pure-function | `pnpm -r test` | Every PR via CI. `node:test` against `apps/frontend/src/api.ts` (ApiError extraction, type-narrowing). Test files are excluded from `tsc -b` so React build stays free of Node types. |
 | REST drill loop | `pnpm smoke:drill-loop` | Every PR via CI. Boots its own backend. Offline grader. |
 | Browser drill loop | `pnpm smoke:browser` | Every PR via CI. Playwright, no mic. Asserts grade panel + history + events timeline. |
 | Realtime WebRTC | `pnpm smoke:realtime` | Local only — needs `OPENAI_API_KEY`. |

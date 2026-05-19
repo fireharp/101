@@ -264,14 +264,20 @@ export interface SessionRow {
 export const sessions = {
   create(userId: string, mode: Mode = "mixed"): SessionRow {
     const id = randomUUID();
-    db.prepare(
-      "INSERT INTO drill_sessions (id, user_id, mode) VALUES (?, ?, ?)",
-    ).run(id, userId, mode);
-    return { id, user_id: userId, mode, started_at: new Date().toISOString(), ended_at: null };
+    // RETURNING * so the in-memory object matches the persisted row exactly
+    // (same timestamp source, same format) — otherwise the JS-side
+    // toISOString() drifts from SQLite's default by a few ms.
+    const row = db
+      .prepare(
+        `INSERT INTO drill_sessions (id, user_id, mode) VALUES (?, ?, ?)
+         RETURNING *`,
+      )
+      .get(id, userId, mode) as SessionRow;
+    return row;
   },
   end(id: string): void {
     db.prepare(
-      "UPDATE drill_sessions SET ended_at = datetime('now') WHERE id = ?",
+      "UPDATE drill_sessions SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
     ).run(id);
   },
   get(id: string): SessionRow | null {
@@ -405,10 +411,16 @@ export const attempts = {
     drill_id: string;
   }): DrillAttempt {
     const id = randomUUID();
-    db.prepare(
-      `INSERT INTO drill_attempts (id, user_id, session_id, drill_id)
-       VALUES (?, ?, ?, ?)`,
-    ).run(id, opts.user_id, opts.session_id, opts.drill_id);
+    // RETURNING created_at so the in-memory created_at matches storage.
+    const row = db
+      .prepare(
+        `INSERT INTO drill_attempts (id, user_id, session_id, drill_id)
+         VALUES (?, ?, ?, ?)
+         RETURNING created_at`,
+      )
+      .get(id, opts.user_id, opts.session_id, opts.drill_id) as {
+      created_at: string;
+    };
     return {
       id,
       user_id: opts.user_id,
@@ -421,7 +433,7 @@ export const attempts = {
       missed_points: null,
       ideal_answer: null,
       created_cards: null,
-      created_at: new Date().toISOString(),
+      created_at: row.created_at,
     };
   },
 
@@ -577,7 +589,7 @@ export const skillState = {
         `INSERT INTO user_skill_state
            (user_id, topic, subtopic, exposure_count, last_seen_at,
             avg_score, weakness_score, next_due_at)
-         VALUES (?, ?, ?, 1, datetime('now'), ?, ?, datetime('now', '+1 day'))`,
+         VALUES (?, ?, ?, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+1 day'))`,
       ).run(opts.user_id, opts.topic, opts.subtopic, opts.score, weakness);
       return;
     }
@@ -593,10 +605,10 @@ export const skillState = {
     db.prepare(
       `UPDATE user_skill_state
          SET exposure_count = ?,
-             last_seen_at = datetime('now'),
+             last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
              avg_score = ?,
              weakness_score = ?,
-             next_due_at = datetime('now', ?)
+             next_due_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)
          WHERE user_id = ? AND topic = ? AND subtopic = ?`,
     ).run(
       newCount,
@@ -704,17 +716,41 @@ export const events = {
    * rubric edits) are written under sentinel session_id `__admin__` so they
    * stay out of per-session timelines but remain queryable as an admin audit
    * log (LOCAL.md §13).
+   *
+   * `types` filters by event_type (OR-match). `sinceIso` filters by
+   * created_at ≥ that ISO timestamp. Both are optional; with neither set
+   * this returns the most-recent `limit` admin events.
    */
-  listAdmin(limit = 100): SessionEvent[] {
+  listAdmin(opts: {
+    limit?: number;
+    types?: EventType[];
+    sinceIso?: string;
+  } = {}): SessionEvent[] {
+    const limit = Math.max(1, Math.min(500, opts.limit ?? 100));
+    const clauses = ["session_id = ?"];
+    const params: unknown[] = [ADMIN_AUDIT_SESSION_ID];
+    if (opts.types && opts.types.length > 0) {
+      const placeholders = opts.types.map(() => "?").join(",");
+      clauses.push(`event_type IN (${placeholders})`);
+      params.push(...opts.types);
+    }
+    if (opts.sinceIso) {
+      // SQLite stores created_at as 'YYYY-MM-DD HH:MM:SS' but the caller
+      // passes ISO 8601 ('...T...Z'). Normalise both sides via datetime()
+      // so the comparison is on parsed timestamps, not raw strings.
+      clauses.push("datetime(created_at) >= datetime(?)");
+      params.push(opts.sinceIso);
+    }
+    params.push(limit);
     const rows = db
       .prepare(
         `SELECT id, session_id, event_type, payload, created_at
            FROM session_events
-           WHERE session_id = ?
+           WHERE ${clauses.join(" AND ")}
            ORDER BY id DESC
            LIMIT ?`,
       )
-      .all(ADMIN_AUDIT_SESSION_ID, limit) as {
+      .all(...params) as {
       id: number;
       session_id: string;
       event_type: string;
@@ -904,7 +940,7 @@ export const cards = {
     const stmt = db.prepare(
       `INSERT INTO generated_cards
          (id, user_id, drill_id, front, back, topic, subtopic, next_due_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+1 day'))`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+1 day'))`,
     );
     const out: GeneratedCard[] = [];
     const insertAll = db.transaction((items: GeneratedCard[]) => {
@@ -931,7 +967,7 @@ export const cards = {
       .prepare(
         `SELECT * FROM generated_cards
            WHERE user_id = ?
-             AND (next_due_at IS NULL OR next_due_at <= datetime('now'))
+             AND (next_due_at IS NULL OR datetime(next_due_at) <= datetime('now'))
            ORDER BY next_due_at ASC
            LIMIT ?`,
       )
@@ -980,12 +1016,12 @@ export const cards = {
       interval === 0
         ? `UPDATE generated_cards
              SET ease = ?, interval_days = 0,
-                 next_due_at = datetime('now', '+10 minutes')
+                 next_due_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+10 minutes')
              WHERE id = ? AND user_id = ?
              RETURNING next_due_at`
         : `UPDATE generated_cards
              SET ease = ?, interval_days = ?,
-                 next_due_at = datetime('now', ?)
+                 next_due_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)
              WHERE id = ? AND user_id = ?
              RETURNING next_due_at`;
     const params =
@@ -1012,7 +1048,7 @@ export const cards = {
         .prepare(
           `SELECT COUNT(*) AS c FROM generated_cards
              WHERE user_id = ?
-               AND (next_due_at IS NULL OR next_due_at <= datetime('now'))`,
+               AND (next_due_at IS NULL OR datetime(next_due_at) <= datetime('now'))`,
         )
         .get(userId) as { c: number }
     ).c;

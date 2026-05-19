@@ -238,7 +238,7 @@ Verdict: `>= 0.80 pass`, `0.60–0.79 borderline`, `< 0.60 fail`.
 | `GET`  | `/api/usage/summary` | aggregated token usage for the user (current session + lifetime totals) |
 | `GET`  | `/api/drill-sessions/:id/summary` | per-session stats (attempts, scores, topics) |
 | `GET`  | `/api/drill-sessions/:id/events` | audit log (LOCAL.md §7 `session_events`) |
-| `GET`  | `/api/admin/events` | admin audit trail — drill imports, draft state changes, rubric edits (`?limit=N`, default 100, max 500) |
+| `GET`  | `/api/admin/events` | admin audit trail — drill imports, draft state changes, rubric edits. Optional `?type=` (CSV of `drill_imported,draft_activated,draft_deactivated,draft_discarded,rubric_edited`), `?since=` (ISO 8601), `?limit=N` (default 100, max 500) |
 | `POST` | `/api/drill-sessions/:id/end` | mark ended + return summary |
 
 ## Seed drills

@@ -471,6 +471,107 @@ test("GET /api/admin/events clamps the limit param into [1, 500]", async () => {
   assert.ok(Array.isArray(garbage.json.events));
 });
 
+test("GET /api/admin/events filters by type (single, CSV, and invalid)", async () => {
+  const draftId = `fx_admin_filter_${randomUUID().slice(0, 8)}`;
+  drills.upsert({
+    ...fixtures[2]!,
+    id: draftId,
+    is_active: false,
+  });
+
+  const activated = await http("POST", `/api/drills/${draftId}/activate`, {});
+  assert.equal(activated.status, 200);
+
+  const edited = await http("PATCH", "/api/drills/fx_db_001", {
+    trap_type: "admin_event_filter_check",
+  });
+  assert.equal(edited.status, 200);
+
+  const ruleEdits = await http<{
+    events: { event_type: string; payload: { drill_id?: string } | null }[];
+  }>("GET", "/api/admin/events?type=rubric_edited&limit=500");
+  assert.equal(ruleEdits.status, 200);
+  assert.ok(ruleEdits.json.events.length >= 1);
+  assert.ok(
+    ruleEdits.json.events.every((e) => e.event_type === "rubric_edited"),
+    "type filter should exclude every other event_type",
+  );
+
+  const csv = await http<{ events: { event_type: string }[] }>(
+    "GET",
+    "/api/admin/events?type=rubric_edited,draft_activated&limit=500",
+  );
+  assert.equal(csv.status, 200);
+  const eventTypes = new Set(csv.json.events.map((e) => e.event_type));
+  for (const t of eventTypes) {
+    assert.ok(
+      ["rubric_edited", "draft_activated"].includes(t),
+      `unexpected event_type leaked through CSV filter: ${t}`,
+    );
+  }
+
+  const bad = await http<{ error: string; allowed?: string[] }>(
+    "GET",
+    "/api/admin/events?type=session_created",
+  );
+  assert.equal(bad.status, 400);
+  assert.match(bad.json.error, /unknown event type/i);
+  assert.ok(
+    bad.json.allowed?.includes("rubric_edited"),
+    "400 response should hint the allowed admin types",
+  );
+});
+
+test("GET /api/admin/events 'since' filter excludes older events and rejects garbage", async () => {
+  const draftId = `fx_admin_since_${randomUUID().slice(0, 8)}`;
+  drills.upsert({
+    ...fixtures[2]!,
+    id: draftId,
+    is_active: false,
+  });
+
+  // Anchor: capture "now" floored to the second to match SQLite's
+  // CURRENT_TIMESTAMP precision, then write a fresh admin event after it.
+  const anchor = new Date();
+  anchor.setMilliseconds(0);
+  const sinceIso = anchor.toISOString();
+  // Pause to make sure created_at strictly increases past `sinceIso`.
+  await new Promise((r) => setTimeout(r, 1100));
+  const activated = await http("POST", `/api/drills/${draftId}/activate`, {});
+  assert.equal(activated.status, 200);
+
+  const fresh = await http<{
+    events: { event_type: string; created_at: string }[];
+  }>("GET", `/api/admin/events?since=${encodeURIComponent(sinceIso)}&limit=500`);
+  assert.equal(fresh.status, 200);
+  assert.ok(
+    fresh.json.events.length >= 1,
+    "should include the activation we just did",
+  );
+  // created_at is stored in SQLite local-naive form ('YYYY-MM-DD HH:MM:SS');
+  // compare as parsed timestamps, not raw strings.
+  const sinceMs = new Date(sinceIso).getTime();
+  for (const e of fresh.json.events) {
+    // SQLite stamps may arrive as UTC-naive ('YYYY-MM-DD HH:MM:SS') or ISO.
+    const normalized = e.created_at.includes("T")
+      ? e.created_at
+      : `${e.created_at.replace(" ", "T")}Z`;
+    const eventMs = new Date(normalized).getTime();
+    assert.ok(Number.isFinite(eventMs), `created_at should parse: ${e.created_at}`);
+    assert.ok(
+      eventMs >= sinceMs,
+      `every event should be ≥ since (${e.created_at} < ${sinceIso})`,
+    );
+  }
+
+  const bad = await http<{ error: string }>(
+    "GET",
+    "/api/admin/events?since=last-tuesday",
+  );
+  assert.equal(bad.status, 400);
+  assert.match(bad.json.error, /invalid 'since'/);
+});
+
 test("GET /api/drills/export.yaml round-trips active drills (LOCAL.md §16 seed format)", async () => {
   const YAML = (await import("yaml")).default;
 

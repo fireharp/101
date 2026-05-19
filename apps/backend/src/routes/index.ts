@@ -14,6 +14,7 @@ import {
   skillState,
   usageEvents,
   users,
+  type EventType,
 } from "../db/repo.js";
 import { selectNextDrill } from "../engines/rotation.js";
 import { gradeAttempt } from "../engines/grading.js";
@@ -946,12 +947,46 @@ apiRouter.patch("/drills/:id", (req: Request, res: Response) => {
 /* changes, rubric edits). Backs the LOCAL.md §13 admin loop so       */
 /* changes to the drill bank are reviewable.                          */
 /* ------------------------------------------------------------------ */
+const ADMIN_EVENT_TYPES = new Set<string>([
+  "drill_imported",
+  "draft_activated",
+  "draft_deactivated",
+  "draft_discarded",
+  "rubric_edited",
+]);
+
 apiRouter.get("/admin/events", (req: Request, res: Response) => {
   const limitRaw = Number(req.query.limit ?? 100);
   const limit = Number.isFinite(limitRaw)
     ? Math.max(1, Math.min(500, Math.floor(limitRaw)))
     : 100;
-  res.json({ events: events.listAdmin(limit) });
+
+  const typeParam = req.query.type;
+  let types: EventType[] | undefined;
+  if (typeof typeParam === "string" && typeParam.length > 0) {
+    const requested = typeParam.split(",").map((s) => s.trim()).filter(Boolean);
+    const invalid = requested.filter((t) => !ADMIN_EVENT_TYPES.has(t));
+    if (invalid.length > 0) {
+      return res.status(400).json({
+        error: `unknown event type(s): ${invalid.join(", ")}`,
+        allowed: [...ADMIN_EVENT_TYPES],
+      });
+    }
+    types = requested as EventType[];
+  }
+
+  let sinceIso: string | undefined;
+  if (typeof req.query.since === "string" && req.query.since.length > 0) {
+    const parsed = new Date(req.query.since);
+    if (Number.isNaN(parsed.getTime())) {
+      return res.status(400).json({
+        error: `invalid 'since' — expected ISO 8601, got '${req.query.since}'`,
+      });
+    }
+    sinceIso = parsed.toISOString();
+  }
+
+  res.json({ events: events.listAdmin({ limit, types, sinceIso }) });
 });
 
 /* ------------------------------------------------------------------ */

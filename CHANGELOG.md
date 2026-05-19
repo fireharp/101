@@ -35,6 +35,10 @@ audit into one command.
   route test, including the two the realtime smokes don't exercise
   (`save_generated_cards` malformed-input filter,
   `get_user_skill_summary` against a freshly graded user).
+- **`db/seed.test.ts`** — unit tests for `importDrillsFromYaml`
+  covering the four explicit return paths (parse failure, empty
+  document, single-object wrap, mixed valid+invalid partial success).
+  Pushed import edge-case coverage down from HTTP to direct unit.
 - **CI** — `.github/workflows/ci.yml` runs `smoke:all --offline-only`
   on every PR; `.github/workflows/realtime-smoke.yml` runs the
   realtime tiers daily via cron + on push to voice-related files.
@@ -85,7 +89,10 @@ back-and-forth" — backed up with visible UI affordances.
 - **Admin audit trail** — drill imports, draft activate / deactivate /
   discard, and rubric edits write to `session_events` under sentinel
   `__admin__` and surface via `GET /api/admin/events`. The PATCH
-  rubric handler records which fields changed.
+  rubric handler records which fields changed. Supports `?type=` (CSV
+  of admin event types, invalid types return 400 with the allow-list),
+  `?since=` (ISO 8601, normalised via SQLite `datetime()` so the
+  comparison crosses the T-vs-space format gap), and `?limit=` (1–500).
 - **Drill browse** — every loaded drill, topic filter, expandable
   rubric, "Edit rubric" inline form, "Test grade" dry-run widget.
 - **Drafts panel** — Layer-3 LLM-generated drills (`is_active=false`)

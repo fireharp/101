@@ -11,7 +11,7 @@ export function runMigrations(): void {
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       display_name TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
 
     CREATE TABLE IF NOT EXISTS drill_items (
@@ -27,7 +27,7 @@ export function runMigrations(): void {
       canonical_deep_answer TEXT,
       tags TEXT NOT NULL DEFAULT '[]',
       is_active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
 
     CREATE TABLE IF NOT EXISTS drill_templates (
@@ -40,14 +40,14 @@ export function runMigrations(): void {
       rubric_template TEXT NOT NULL,
       canonical_answer_template TEXT NOT NULL,
       trap_type TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
 
     CREATE TABLE IF NOT EXISTS drill_sessions (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       mode TEXT NOT NULL DEFAULT 'mixed',
-      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
       ended_at TEXT
     );
 
@@ -63,7 +63,7 @@ export function runMigrations(): void {
       missed_points TEXT,
       ideal_answer TEXT,
       created_cards TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_drill_attempts_user_created
@@ -95,7 +95,7 @@ export function runMigrations(): void {
       next_due_at TEXT,
       ease REAL NOT NULL DEFAULT 2.5,
       interval_days INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_cards_user_due
@@ -106,7 +106,7 @@ export function runMigrations(): void {
       session_id TEXT NOT NULL,
       event_type TEXT NOT NULL,
       payload TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
 
     CREATE TABLE IF NOT EXISTS usage_events (
@@ -128,7 +128,7 @@ export function runMigrations(): void {
       output_audio_tokens INTEGER NOT NULL DEFAULT 0,
       estimated_cost_usd REAL,
       raw_usage TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_usage_events_session
@@ -144,4 +144,33 @@ export function runMigrations(): void {
       ON usage_events(response_id)
       WHERE response_id IS NOT NULL;
   `);
+
+  // One-off backfill for DBs created before we switched defaults from naive
+  // 'YYYY-MM-DD HH:MM:SS' to ISO 8601 'YYYY-MM-DDTHH:MM:SS.sssZ'. The naive
+  // form was being misinterpreted as local time by JS Date.parse in the UI
+  // (App.tsx renders session/event times) and made `next_due_at <=
+  // datetime('now')` comparisons fragile when mixed with newer rows. This
+  // backfill is idempotent — the `NOT LIKE '%T%'` guard skips already-ISO
+  // rows on every subsequent run.
+  const normaliseColumns: { table: string; columns: string[] }[] = [
+    { table: "users", columns: ["created_at"] },
+    { table: "drill_items", columns: ["created_at"] },
+    { table: "drill_templates", columns: ["created_at"] },
+    { table: "drill_sessions", columns: ["started_at", "ended_at"] },
+    { table: "drill_attempts", columns: ["created_at"] },
+    { table: "user_skill_state", columns: ["last_seen_at", "next_due_at"] },
+    { table: "generated_cards", columns: ["created_at", "next_due_at"] },
+    { table: "session_events", columns: ["created_at"] },
+    { table: "usage_events", columns: ["created_at"] },
+  ];
+  for (const { table, columns } of normaliseColumns) {
+    for (const col of columns) {
+      db.prepare(
+        `UPDATE ${table}
+           SET ${col} = REPLACE(${col}, ' ', 'T') || 'Z'
+         WHERE ${col} IS NOT NULL
+           AND ${col} NOT LIKE '%T%'`,
+      ).run();
+    }
+  }
 }

@@ -30,6 +30,28 @@ export function App() {
     drills: number;
     openai_configured: boolean;
   } | null>(null);
+  const [progress, setProgress] = useState<
+    {
+      topic: string;
+      subtopic: string;
+      weakness_score: number;
+      exposure_count: number;
+    }[]
+  >([]);
+  const [dueCards, setDueCards] = useState<
+    {
+      id: string;
+      front: string;
+      back: string;
+      topic: string | null;
+      subtopic: string | null;
+    }[]
+  >([]);
+  const [cardStats, setCardStats] = useState<{ total: number; due: number }>({
+    total: 0,
+    due: 0,
+  });
+  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
 
   const startedAtRef = useRef<number | null>(null);
   const tickRef = useRef<number | null>(null);
@@ -207,6 +229,43 @@ export function App() {
     return `verdict-${grade.verdict}`;
   }, [grade]);
 
+  const refreshSidecar = useCallback(async () => {
+    try {
+      const [prog, due] = await Promise.all([
+        api.progress(),
+        api.cardsDue(30),
+      ]);
+      setProgress(prog.skills.slice(0, 5));
+      setDueCards(due.cards);
+      setCardStats(due.stats);
+    } catch (e) {
+      // sidecar is non-fatal — surface but keep going
+      console.warn("sidecar refresh failed:", (e as Error).message);
+    }
+  }, []);
+
+  // Refresh sidecar (progress, due cards) on mount and after every grade.
+  useEffect(() => {
+    void refreshSidecar();
+  }, [refreshSidecar, grade]);
+
+  const onReviewCard = useCallback(
+    async (cardId: string, quality: 0 | 1) => {
+      try {
+        await api.reviewCard(cardId, quality);
+        setDueCards((prev) => prev.filter((c) => c.id !== cardId));
+        setRevealed((prev) => {
+          const { [cardId]: _omit, ...rest } = prev;
+          return rest;
+        });
+        void refreshSidecar();
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [refreshSidecar],
+  );
+
   return (
     <div className="app">
       <header className="app-header">
@@ -215,10 +274,34 @@ export function App() {
           {health
             ? `${health.drills} drills · OpenAI ${
                 health.openai_configured ? "ready" : "missing key"
-              }`
+              } · cards ${cardStats.due}/${cardStats.total} due`
             : "..."}
         </div>
       </header>
+
+      {progress.length > 0 && (
+        <div
+          className="panel"
+          data-testid="progress-strip"
+          style={{ gridColumn: "1 / -1", padding: "0.6rem 1rem" }}
+        >
+          <div className="row" style={{ alignItems: "center" }}>
+            <strong style={{ fontSize: "0.85rem", letterSpacing: "0.02em" }}>
+              Weakest
+            </strong>
+            {progress.slice(0, 3).map((s) => (
+              <span
+                key={`${s.topic}:${s.subtopic}`}
+                className="tag"
+                title={`exposure ${s.exposure_count}`}
+              >
+                {s.topic} · {s.subtopic} ·{" "}
+                {(s.weakness_score * 100).toFixed(0)}%
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <section className="panel">
         <h2>Drill</h2>
@@ -388,6 +471,79 @@ export function App() {
           </>
         )}
       </aside>
+
+      <section
+        className="panel"
+        data-testid="card-review"
+        style={{ gridColumn: "1 / -1" }}
+      >
+        <h2>
+          Card review{" "}
+          <span className="muted" style={{ fontWeight: 400, fontSize: "0.85rem" }}>
+            ({cardStats.due} due / {cardStats.total} total)
+          </span>
+        </h2>
+        {dueCards.length === 0 ? (
+          <p className="muted">
+            No cards due. Grade a drill and the missed points become flashcards
+            scheduled with SM-2-lite (knew it stretches the interval, forgot
+            resets it).
+          </p>
+        ) : (
+          <div
+            style={{
+              display: "grid",
+              gap: "0.6rem",
+              gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+            }}
+          >
+            {dueCards.map((c) => (
+              <div className="card" key={c.id} data-testid="card">
+                <div className="front">{c.front}</div>
+                {revealed[c.id] ? (
+                  <div className="back" style={{ marginTop: "0.4rem" }}>
+                    {c.back}
+                  </div>
+                ) : null}
+                <div className="row" style={{ marginTop: "0.5rem", gap: "0.4rem" }}>
+                  {!revealed[c.id] ? (
+                    <button
+                      data-testid="reveal-card"
+                      onClick={() =>
+                        setRevealed((prev) => ({ ...prev, [c.id]: true }))
+                      }
+                    >
+                      Reveal
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        data-testid="forgot-card"
+                        onClick={() => onReviewCard(c.id, 0)}
+                      >
+                        Forgot
+                      </button>
+                      <button
+                        data-testid="knew-card"
+                        className="primary"
+                        onClick={() => onReviewCard(c.id, 1)}
+                      >
+                        Knew it
+                      </button>
+                    </>
+                  )}
+                  {(c.topic || c.subtopic) && (
+                    <span className="tag" style={{ marginLeft: "auto" }}>
+                      {c.topic ?? ""}
+                      {c.subtopic ? ` · ${c.subtopic}` : ""}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

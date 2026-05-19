@@ -1,0 +1,56 @@
+id: tmpl_composite_index
+topic: database
+subtopic: composite_indexes
+difficulty: 3
+trap_type: equality_plus_order_by
+template_text: >
+  A {table_name} table has columns {columns}. The common query is {query}.
+  What index would you propose and why?
+canonical_answer_template: >
+  A composite B-tree on ({equality_col}, {ordered_col}) covers the query:
+  equality column first, ordered column second. Verify with EXPLAIN ANALYZE
+  because selectivity matters.
+rubric_template:
+  must_have:
+    - composite B-tree
+    - "{equality_col} before {ordered_col}"
+    - explain WHERE + ORDER BY + LIMIT
+    - mention query-shape dependence
+  nice_to_have:
+    - partial index for selective predicates
+    - covering index for hot lookups
+    - EXPLAIN ANALYZE
+  red_flags:
+    - index every column
+    - hash index for ordered query
+    - "{ordered_col}-only index without caveat"
+tags: [postgres, mysql, indexing]
+variants:
+  - id: db_index_orders_recent_001
+    vars:
+      table_name: orders
+      columns: tenant_id, status, created_at, amount, customer_id
+      query: WHERE tenant_id = ? AND status = 'shipped' ORDER BY created_at DESC LIMIT 20
+      equality_col: tenant_id
+      ordered_col: created_at
+  - id: db_index_events_recent_001
+    vars:
+      table_name: events
+      columns: user_id, event_type, created_at, metadata
+      query: WHERE user_id = ? AND event_type = 'click' ORDER BY created_at DESC LIMIT 100
+      equality_col: user_id
+      ordered_col: created_at
+  - id: db_index_messages_recent_001
+    vars:
+      table_name: messages
+      columns: thread_id, sender_id, sent_at, body
+      query: WHERE thread_id = ? ORDER BY sent_at DESC LIMIT 50
+      equality_col: thread_id
+      ordered_col: sent_at
+  - id: db_index_invoices_recent_001
+    vars:
+      table_name: invoices
+      columns: account_id, status, due_date, total
+      query: WHERE account_id = ? AND status = 'open' ORDER BY due_date ASC LIMIT 50
+      equality_col: account_id
+      ordered_col: due_date

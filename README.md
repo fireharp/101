@@ -79,7 +79,7 @@ scripts/
   drill-loop-smoke.mjs      offline REST loop smoke
   drill-loop-browser-smoke.mjs offline Playwright UI smoke
   dev-reset.mjs             wipe + reseed local SQLite
-  doctor.mjs                pnpm run doctor — environment diagnostic
+  doctor.mjs                pnpm dev:doctor — environment diagnostic
 ```
 
 ## Setup
@@ -103,7 +103,7 @@ pnpm dev:frontend                         # vite
 pnpm --filter @drill/backend seed          # re-seed drills from YAML
 pnpm --filter @drill/backend seed:templates # expand Layer-2 templates
 pnpm --filter @drill/backend gen:drills -- --topic X --count N  # LLM Layer-3 drafts
-pnpm run doctor      # environment diagnostic (Node, pnpm, env, sqlite, ports…)
+pnpm dev:doctor      # environment diagnostic (Node, pnpm, env, sqlite, ports…)
 pnpm dev:reset       # wipe local SQLite + reseed (refuses while dev is running)
 pnpm verify:drills   # lint seeds/drills/*.yaml against the schema
 pnpm check           # build + tests + offline smokes (CI runs this)

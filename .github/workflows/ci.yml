@@ -39,22 +39,16 @@ jobs:
       - name: Force rebuild native modules (better-sqlite3)
         run: pnpm rebuild -r better-sqlite3
 
-      - name: TypeScript build
-        run: pnpm -r build
-
-      - name: Backend tests (engine + route)
-        run: pnpm -r test
-
-      - name: REST drill-loop smoke (offline)
-        run: pnpm smoke:drill-loop
-
       - name: Install Playwright browser
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Browser drill-loop smoke (offline)
+      # Single composite: dev:doctor + verify:drills --strict + build +
+      # tests + REST smoke + browser smoke. Same gate as a developer's
+      # local `pnpm smoke:all --offline-only`.
+      - name: Smoke all (offline)
         env:
           HEADLESS: "1"
-        run: pnpm smoke:browser
+        run: pnpm smoke:all --offline-only
 
       - name: Upload screenshots on failure
         if: failure()

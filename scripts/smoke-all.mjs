@@ -17,7 +17,11 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const offlineOnly = process.argv.includes("--offline-only");
 
 const offlineSteps = [
-  { name: "verify:drills", cmd: ["pnpm", "verify:drills"] },
+  { name: "dev:doctor", cmd: ["pnpm", "dev:doctor"] },
+  {
+    name: "verify:drills --strict",
+    cmd: ["pnpm", "verify:drills", "--", "--strict"],
+  },
   { name: "build", cmd: ["pnpm", "build"] },
   { name: "test (unit + route)", cmd: ["pnpm", "test"] },
   { name: "smoke:drill-loop", cmd: ["pnpm", "smoke:drill-loop"] },

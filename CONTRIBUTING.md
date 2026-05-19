@@ -25,11 +25,11 @@ See `README.md` → "LOCAL.md spec coverage" for the section-by-section map.
 pnpm install          # one time
 cp apps/backend/.env.example .env   # or place a single .env at the root
 # put OPENAI_API_KEY in .env
-pnpm run doctor       # one-shot environment check (Node/pnpm/env/sqlite/port/playwright)
+pnpm dev:doctor       # one-shot environment check (Node/pnpm/env/sqlite/port/playwright)
 pnpm dev              # backend on :4000, frontend on :5173
 ```
 
-`pnpm run doctor` is the fastest way to triage "it doesn't work on my
+`pnpm dev:doctor` is the fastest way to triage "it doesn't work on my
 machine" — it inspects Node and pnpm versions, the `.env` file and the
 OpenAI key, the better-sqlite3 native binding (the most common breakage
 on fresh clones), DB writability, port availability, Playwright /
@@ -97,7 +97,7 @@ engines/
 
 | File | Trigger | What it runs |
 | --- | --- | --- |
-| `.github/workflows/ci.yml` | every PR + push to main | drill linter, build, tests, REST + browser smokes (offline four) |
+| `.github/workflows/ci.yml` | every PR + push to main | `pnpm smoke:all --offline-only` — doctor, drill linter (strict), build, tests, REST smoke, browser smoke |
 | `.github/workflows/realtime-smoke.yml` | daily cron (09:00 UTC), manual dispatch, push to main that touches realtime code | `smoke:realtime:loop` + `smoke:realtime:end` — daily liveness check on the OpenAI voice loop |
 
 The realtime workflow skips itself gracefully when `OPENAI_API_KEY` isn't

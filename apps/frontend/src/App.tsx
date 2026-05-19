@@ -129,6 +129,27 @@ export function App() {
     if (realtime.transcript) setTranscript(realtime.transcript);
   }, [realtime.transcript]);
 
+  const startVoiceForDrill = useCallback(
+    async (nextDrill: DrillPayload) => {
+      if (realtime.status === "connected") {
+        if (pushedVoiceDrillRef.current !== nextDrill.attempt_id) {
+          realtime.pushDrill(nextDrill.question_text, {
+            pressure: pressureMode,
+            attemptId: nextDrill.attempt_id,
+          });
+          pushedVoiceDrillRef.current = nextDrill.attempt_id;
+        }
+        return;
+      }
+      pushedVoiceDrillRef.current = nextDrill.attempt_id;
+      await realtime.start(nextDrill.question_text, {
+        pressure: pressureMode,
+        attemptId: nextDrill.attempt_id,
+      });
+    },
+    [pressureMode, realtime.pushDrill, realtime.start, realtime.status],
+  );
+
   // When a new drill is selected while voice is live, push it to the agent.
   useEffect(() => {
     if (
@@ -136,7 +157,10 @@ export function App() {
       realtime.status === "connected" &&
       pushedVoiceDrillRef.current !== drill.attempt_id
     ) {
-      realtime.pushDrill(drill.question_text, { pressure: pressureMode });
+      realtime.pushDrill(drill.question_text, {
+        pressure: pressureMode,
+        attemptId: drill.attempt_id,
+      });
       pushedVoiceDrillRef.current = drill.attempt_id;
     }
   }, [drill, pressureMode, realtime.pushDrill, realtime.status]);
@@ -351,10 +375,11 @@ export function App() {
       setDrill(d);
       setDrillCount(1);
       startTimer();
+      if (health?.openai_configured) await startVoiceForDrill(d);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [mode, pressureMode, startTimer]);
+  }, [health?.openai_configured, mode, pressureMode, startTimer, startVoiceForDrill]);
 
   const onNext = useCallback(async () => {
     if (!session) return;
@@ -366,10 +391,11 @@ export function App() {
       setDrill(d);
       setDrillCount((c) => c + 1);
       startTimer();
+      if (health?.openai_configured) await startVoiceForDrill(d);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [mode, session, startTimer]);
+  }, [health?.openai_configured, mode, session, startTimer, startVoiceForDrill]);
 
   const onSubmit = useCallback(async () => {
     if (!drill) return;
@@ -574,6 +600,33 @@ export function App() {
     }
   }, [drillBrowse]);
 
+  const onImportDrillFile = useCallback(
+    async (file: File) => {
+      try {
+        const text = await file.text();
+        const r = await api.importDrills(text);
+        if (r.imported > 0) {
+          // Refresh drill bank list so the imported rows appear.
+          const fresh = await api.drills();
+          setDrillBrowse(fresh.drills);
+        }
+        const msg =
+          r.skipped.length > 0
+            ? `Imported ${r.imported}, skipped ${r.skipped.length}: ${r.skipped[0]?.error ?? "see server logs"}`
+            : `Imported ${r.imported} drill${r.imported === 1 ? "" : "s"}`;
+        setError(r.ok ? null : msg);
+        if (r.ok) {
+          // Use a transient success toast via the error slot? Better to log.
+          // eslint-disable-next-line no-console
+          console.info(msg);
+        }
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [],
+  );
+
   const onReviewCard = useCallback(
     async (cardId: string, quality: 0 | 1) => {
       try {
@@ -617,6 +670,22 @@ export function App() {
             }}
           >
             Export Anki CSV
+          </a>
+          <a
+            data-testid="export-drills"
+            href="/api/drills/export.yaml"
+            download="drill-bank.yaml"
+            title="Download the full active drill bank as YAML (seed format)"
+            style={{
+              textDecoration: "none",
+              color: "inherit",
+              border: "1px solid var(--border)",
+              padding: "0.35rem 0.6rem",
+              borderRadius: 6,
+              fontSize: "0.85rem",
+            }}
+          >
+            Export drills YAML
           </a>
           <button
             data-testid="pressure-mode-toggle"
@@ -749,8 +818,8 @@ export function App() {
         {!drill && !resuming && (
           <>
             <p className="muted">
-              Pick a mode and start. The backend's rotation engine selects the
-              drill so you don't get the exact same task repeatedly.
+              Pick a mode and start. Voice starts immediately when OpenAI is
+              configured and asks the selected drill aloud.
             </p>
             <div className="row">
               <select
@@ -794,6 +863,33 @@ export function App() {
                 </span>
               )}
               <span className="timer">⏱ {formatTime(elapsed)}</span>
+              {realtime.status === "connected" && (
+                <>
+                  <span
+                    data-testid="voice-state"
+                    className="tag"
+                    style={{
+                      background: realtime.isAgentSpeaking
+                        ? "var(--accent)"
+                        : "transparent",
+                      color: realtime.isAgentSpeaking
+                        ? "#0c1220"
+                        : "inherit",
+                      fontSize: "0.72rem",
+                    }}
+                    title={
+                      realtime.isAgentSpeaking
+                        ? "Agent is speaking — listen"
+                        : "Waiting for your spoken answer"
+                    }
+                  >
+                    {realtime.isAgentSpeaking
+                      ? "🔊 Coach speaking"
+                      : "🎤 Listening"}
+                  </span>
+                  <MicMeter level={realtime.micLevel} />
+                </>
+              )}
             </div>
             <div data-testid="question" className="question">
               {drill.question_text.trim()}
@@ -830,6 +926,7 @@ export function App() {
                   if (drill) pushedVoiceDrillRef.current = drill.attempt_id;
                   void realtime.start(drill?.question_text, {
                     pressure: pressureMode,
+                    attemptId: drill?.attempt_id,
                   });
                 }}
                 disabled={realtime.status === "connecting"}
@@ -865,6 +962,36 @@ export function App() {
               </button>
             </div>
 
+            {realtime.agentTranscript && (
+              <div
+                data-testid="agent-transcript"
+                style={{
+                  marginBottom: "0.5rem",
+                  padding: "0.5rem 0.7rem",
+                  background: "#0a0c12",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  fontSize: "0.85rem",
+                  lineHeight: 1.45,
+                }}
+              >
+                <div
+                  className="muted"
+                  style={{
+                    fontSize: "0.7rem",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.06em",
+                    marginBottom: "0.25rem",
+                  }}
+                >
+                  Coach (audio)
+                </div>
+                <div style={{ whiteSpace: "pre-wrap" }}>
+                  {realtime.agentTranscript}
+                </div>
+              </div>
+            )}
+
             <textarea
               data-testid="transcript"
               className="transcript"
@@ -886,7 +1013,32 @@ export function App() {
             />
             <audio ref={realtime.audioEl} autoPlay playsInline />
             {realtime.error && (
-              <p className="error">voice: {realtime.error}</p>
+              <div
+                data-testid="voice-error-banner"
+                role="alert"
+                style={{
+                  marginTop: "0.6rem",
+                  padding: "0.6rem 0.8rem",
+                  borderRadius: 8,
+                  border: "1px solid var(--bad)",
+                  background: "rgba(248, 113, 113, 0.08)",
+                  color: "var(--bad)",
+                  fontSize: "0.85rem",
+                  lineHeight: 1.45,
+                }}
+              >
+                <strong style={{ fontWeight: 600 }}>Voice failed</strong>{" "}
+                — {realtime.error}
+                <div
+                  className="muted"
+                  style={{ marginTop: "0.25rem", fontSize: "0.78rem" }}
+                >
+                  Check microphone permission, that{" "}
+                  <code>OPENAI_API_KEY</code> is set on the backend, and that
+                  the page is over HTTPS or <code>localhost</code>. Click{" "}
+                  <em>Start voice</em> again to retry.
+                </div>
+              </div>
             )}
           </>
         )}
@@ -1117,10 +1269,33 @@ export function App() {
                 ({drillBrowse.length} loaded)
               </span>
             </h2>
+            <label
+              data-testid="import-drills"
+              title="Upload a YAML file in the seed format to upsert drills"
+              style={{
+                marginLeft: "auto",
+                cursor: "pointer",
+                border: "1px solid var(--border)",
+                padding: "0.3rem 0.55rem",
+                borderRadius: 6,
+                fontSize: "0.8rem",
+              }}
+            >
+              Import YAML…
+              <input
+                type="file"
+                accept=".yaml,.yml,application/x-yaml,text/yaml"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void onImportDrillFile(file);
+                  e.target.value = "";
+                }}
+              />
+            </label>
             <select
               value={drillBrowseFilter}
               onChange={(e) => setDrillBrowseFilter(e.target.value)}
-              style={{ marginLeft: "auto" }}
             >
               <option value="">All topics</option>
               {[...new Set(drillBrowse.map((d) => d.topic))]
@@ -1470,4 +1645,40 @@ function formatTime(secs: number): string {
     .padStart(2, "0");
   const s = (secs % 60).toString().padStart(2, "0");
   return `${m}:${s}`;
+}
+
+function MicMeter({ level }: { level: number }) {
+  const bars = 5;
+  const lit = Math.min(bars, Math.ceil(level * bars * 1.4));
+  return (
+    <span
+      data-testid="mic-meter"
+      title={`Mic input ${(level * 100).toFixed(0)}%`}
+      style={{
+        display: "inline-flex",
+        gap: 2,
+        alignItems: "flex-end",
+        height: 14,
+        marginLeft: "0.2rem",
+      }}
+      aria-label="microphone level"
+    >
+      {Array.from({ length: bars }).map((_, i) => {
+        const isLit = i < lit;
+        const h = 4 + i * 2;
+        return (
+          <span
+            key={i}
+            style={{
+              width: 3,
+              height: h,
+              background: isLit ? "var(--good)" : "var(--border)",
+              borderRadius: 1,
+              transition: "background 80ms linear",
+            }}
+          />
+        );
+      })}
+    </span>
+  );
 }

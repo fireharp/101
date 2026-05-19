@@ -1,6 +1,8 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import YAML from "yaml";
+import { importDrillsFromYaml } from "../db/seed.js";
 import {
   attempts,
   cards,
@@ -424,6 +426,68 @@ apiRouter.get("/drills", (req: Request, res: Response) => {
 apiRouter.get("/drills/drafts", (_req: Request, res: Response) => {
   const items = drills.listDrafts();
   res.json({ count: items.length, drills: items });
+});
+
+/* ------------------------------------------------------------------ */
+/* POST /api/drills/import                                            */
+/* Bulk-imports drills from YAML. Accepts either:                     */
+/*   - Content-Type: application/x-yaml | text/yaml (raw body), or    */
+/*   - Content-Type: application/json with `{ yaml: "..." }`.         */
+/* Validates each entry with the same Zod schema as the seed loader.  */
+/* Returns { ok, imported, skipped: [{ id?, error }] }.               */
+/* ------------------------------------------------------------------ */
+apiRouter.post("/drills/import", (req: Request, res: Response) => {
+  let yamlText = "";
+  if (typeof req.body === "string") {
+    yamlText = req.body;
+  } else if (
+    req.body &&
+    typeof req.body === "object" &&
+    typeof (req.body as { yaml?: unknown }).yaml === "string"
+  ) {
+    yamlText = (req.body as { yaml: string }).yaml;
+  }
+  if (!yamlText.trim()) {
+    return res
+      .status(400)
+      .json({ error: "send YAML body or JSON { yaml: '...' }" });
+  }
+  const result = importDrillsFromYaml(yamlText);
+  res.status(result.ok ? 200 : 207).json(result);
+});
+
+/* ------------------------------------------------------------------ */
+/* GET /api/drills/export.yaml                                        */
+/* Dumps the active drill bank (and optionally drafts) as YAML in     */
+/* the same shape as the LOCAL.md §16 seed format. Round-trips with   */
+/* seeds/drills/*.yaml so users can edit rubrics in-app, export, and  */
+/* check the result into git.                                         */
+/* ------------------------------------------------------------------ */
+apiRouter.get("/drills/export.yaml", (req: Request, res: Response) => {
+  const includeDrafts = req.query.include_drafts === "1";
+  const active = drills.list({ active: true });
+  const items = includeDrafts ? [...active, ...drills.listDrafts()] : active;
+  const seedFormat = items.map((d) => ({
+    id: d.id,
+    topic: d.topic,
+    subtopic: d.subtopic,
+    difficulty: d.difficulty,
+    trap_type: d.trap_type,
+    question_text: d.question_text,
+    expected_answer: d.expected_answer,
+    rubric: d.rubric,
+    canonical_short_answer: d.canonical_short_answer,
+    canonical_deep_answer: d.canonical_deep_answer,
+    tags: d.tags,
+    is_active: d.is_active,
+  }));
+  const body = YAML.stringify(seedFormat, { lineWidth: 0 });
+  res.setHeader("content-type", "application/x-yaml; charset=utf-8");
+  res.setHeader(
+    "content-disposition",
+    `attachment; filename="drill-bank${includeDrafts ? "-with-drafts" : ""}.yaml"`,
+  );
+  res.send(body);
 });
 
 /* ------------------------------------------------------------------ */

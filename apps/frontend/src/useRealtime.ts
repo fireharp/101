@@ -95,13 +95,28 @@ export interface RealtimeHandle {
   error: string | null;
   start: (
     initialDrill?: string,
-    opts?: { pressure?: boolean },
+    opts?: { pressure?: boolean; attemptId?: string },
   ) => Promise<void>;
   stop: () => Promise<void>;
   transcript: string;
+  agentTranscript: string;
+  /**
+   * True while the model is emitting audio for the current response.
+   * Derived from response.output_audio_transcript.delta arrival vs the
+   * matching response.done. Useful for "🔊 Coach speaking" badges.
+   */
+  isAgentSpeaking: boolean;
+  /**
+   * 0..1 RMS of the local mic stream, sampled ~10 Hz. Lets the UI prove
+   * the mic is alive without listening to a Web Audio loopback.
+   */
+  micLevel: number;
   audioEl: React.RefObject<HTMLAudioElement | null>;
   send: (event: Record<string, unknown>) => void;
-  pushDrill: (question: string, opts?: { pressure?: boolean }) => void;
+  pushDrill: (
+    question: string,
+    opts?: { pressure?: boolean; attemptId?: string },
+  ) => void;
   setToolHandler: (handler: RealtimeToolHandler | null) => void;
 }
 
@@ -109,12 +124,18 @@ export function useRealtime(): RealtimeHandle {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState("");
+  const [agentTranscript, setAgentTranscript] = useState("");
+  const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
+  const [micLevel, setMicLevel] = useState(0);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const micLevelRafRef = useRef<number | null>(null);
   const transcriptItemsRef = useRef<Map<string, string>>(new Map());
+  const agentTranscriptItemsRef = useRef<Map<string, string>>(new Map());
   const toolHandlerRef = useRef<RealtimeToolHandler | null>(null);
   const pendingFunctionCallsRef = useRef<
     Map<string, { name: string; call_id: string; dispatched: boolean }>
@@ -158,9 +179,21 @@ export function useRealtime(): RealtimeHandle {
     } catch {
       /* noop */
     }
+    try {
+      if (micLevelRafRef.current !== null) {
+        window.clearTimeout(micLevelRafRef.current);
+        micLevelRafRef.current = null;
+      }
+      await audioCtxRef.current?.close();
+    } catch {
+      /* noop */
+    }
     dcRef.current = null;
     pcRef.current = null;
     micStreamRef.current = null;
+    audioCtxRef.current = null;
+    setMicLevel(0);
+    setIsAgentSpeaking(false);
   }, []);
 
   const stop = useCallback(async () => {
@@ -172,10 +205,13 @@ export function useRealtime(): RealtimeHandle {
   }, [closeRealtime]);
 
   const pushDrill = useCallback(
-    (question: string, opts: { pressure?: boolean } = {}) => {
+    (question: string, opts: { pressure?: boolean; attemptId?: string } = {}) => {
       if (!question) return;
       const pressureClause = opts.pressure
         ? "\n\nPRESSURE MODE: interrupt rambling after ~10 seconds. If the user stalls, snap 'Default answer now.' Be sharper, shorter, more critical than usual. Force at least one pressure follow-up regardless of answer quality."
+        : "";
+      const attemptClause = opts.attemptId
+        ? `\n\nThe host app already selected this drill. attempt_id=${opts.attemptId}. Do not call get_next_drill before asking this question. After I answer, your next action must be submit_answer_transcript with this attempt_id before any commentary, then grade_attempt.`
         : "";
       send({
         type: "conversation.item.create",
@@ -188,6 +224,7 @@ export function useRealtime(): RealtimeHandle {
               text:
                 "Ask me this drill aloud, exactly once, then wait for my spoken answer:\n" +
                 question.trim() +
+                attemptClause +
                 pressureClause,
             },
           ],
@@ -196,8 +233,9 @@ export function useRealtime(): RealtimeHandle {
       send({
         type: "response.create",
         response: {
+          tools: [],
           instructions:
-            "Ask the current drill question above in one breath, then stop and wait for the user's answer. Do not give hints. After grading the answer, immediately call get_next_drill and ask the new question — do not wait for me." +
+            "Ask the current drill question above in one breath, then stop and wait for the user's answer. Do not give hints. After the user answers, call submit_answer_transcript before any commentary, then grade_attempt. After grading, immediately call get_next_drill and ask the new question — do not wait for me." +
             pressureClause,
         },
       });
@@ -207,11 +245,13 @@ export function useRealtime(): RealtimeHandle {
 
   const start = useCallback(async (
     initialDrill?: string,
-    opts: { pressure?: boolean } = {},
+    opts: { pressure?: boolean; attemptId?: string } = {},
   ) => {
     setError(null);
     setTranscript("");
+    setAgentTranscript("");
     transcriptItemsRef.current.clear();
+    agentTranscriptItemsRef.current.clear();
     setStatus("connecting");
     resetDebug();
     try {
@@ -238,8 +278,10 @@ export function useRealtime(): RealtimeHandle {
         const stream = ev.streams[0];
         if (audio && stream) {
           audio.srcObject = stream;
-          audio.play().catch(() => {
-            /* user gesture probably required; we already had one */
+          audio.muted = false;
+          audio.volume = 1;
+          audio.play().catch((err) => {
+            recordDebugError(`audio playback failed: ${(err as Error).message}`);
           });
         }
       };
@@ -261,6 +303,42 @@ export function useRealtime(): RealtimeHandle {
       micStreamRef.current = mic;
       for (const track of mic.getTracks()) {
         pc.addTrack(track, mic);
+      }
+
+      // Mic-level meter: sample RMS at ~10 Hz so the UI can prove the
+      // mic is alive. The AudioContext + AnalyserNode runs alongside
+      // the WebRTC sender (it does not steal the track).
+      try {
+        const audioWindow = window as typeof window & {
+          webkitAudioContext?: typeof AudioContext;
+        };
+        const Ctor = window.AudioContext ?? audioWindow.webkitAudioContext;
+        if (Ctor) {
+          const ctx = new Ctor();
+          audioCtxRef.current = ctx;
+          const source = ctx.createMediaStreamSource(mic);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 1024;
+          source.connect(analyser);
+          const buf = new Uint8Array(analyser.fftSize);
+          const tick = () => {
+            if (!audioCtxRef.current) return;
+            analyser.getByteTimeDomainData(buf);
+            let sum = 0;
+            for (let i = 0; i < buf.length; i++) {
+              const v = (buf[i] ?? 128) - 128;
+              sum += v * v;
+            }
+            const rms = Math.sqrt(sum / buf.length) / 128;
+            setMicLevel(Math.min(1, rms * 2));
+            micLevelRafRef.current = window.setTimeout(tick, 100) as unknown as number;
+          };
+          tick();
+        }
+      } catch (err) {
+        // Mic metering is a nice-to-have; never block the call on a
+        // Web Audio failure.
+        recordDebugError(`mic meter setup failed: ${(err as Error).message}`);
       }
 
       // Data channel for tool/event messages.
@@ -300,6 +378,24 @@ export function useRealtime(): RealtimeHandle {
             recordDebugError(ev.error?.message ?? "Realtime server error");
           }
           handleEvent(ev, transcriptItemsRef, setTranscript);
+          handleAgentTranscriptEvent(
+            ev,
+            agentTranscriptItemsRef,
+            setAgentTranscript,
+          );
+          if (
+            ev.type === "output_audio_buffer.started" ||
+            ev.type === "response.output_audio_transcript.delta"
+          ) {
+            setIsAgentSpeaking(true);
+          }
+          if (
+            ev.type === "response.output_audio.done" ||
+            ev.type === "response.output_audio_transcript.done" ||
+            ev.type === "response.done"
+          ) {
+            setIsAgentSpeaking(false);
+          }
           if (
             ev.type &&
             (ev.type === "response.output_item.added" ||
@@ -371,6 +467,9 @@ export function useRealtime(): RealtimeHandle {
     start,
     stop,
     transcript,
+    agentTranscript,
+    isAgentSpeaking,
+    micLevel,
     audioEl: audioElRef,
     send,
     pushDrill,
@@ -557,6 +656,43 @@ function publishTranscript(
   setTranscriptText(
     Array.from(transcriptItemsRef.current.values()).filter(Boolean).join("\n"),
   );
+}
+
+/**
+ * Captures the *agent's* spoken transcript (model TTS, not user mic) from
+ * `response.output_audio_transcript.{delta,done}` events. Surfaced as
+ * `agentTranscript` so the UI can show what the agent is saying even if
+ * audio output is broken or muted. The same item_id may produce many
+ * delta events and one done, so we accumulate per item.
+ */
+function handleAgentTranscriptEvent(
+  ev: RealtimeServerEvent,
+  agentTranscriptItemsRef: { current: Map<string, string> },
+  setAgentTranscript: (text: string) => void,
+): void {
+  if (
+    ev.type === "response.output_audio_transcript.delta" &&
+    typeof ev.delta === "string"
+  ) {
+    const itemId = ev.item_id ?? "__agent_streaming";
+    const previous = agentTranscriptItemsRef.current.get(itemId) ?? "";
+    agentTranscriptItemsRef.current.set(itemId, previous + ev.delta);
+    publishTranscript(agentTranscriptItemsRef, setAgentTranscript);
+    return;
+  }
+  if (
+    ev.type === "response.output_audio_transcript.done" &&
+    typeof ev.transcript === "string" &&
+    ev.transcript.length > 0
+  ) {
+    // The done event carries the final, authoritative transcript for this
+    // item — replace any partial deltas with it.
+    agentTranscriptItemsRef.current.set(
+      ev.item_id ?? "__agent_done",
+      ev.transcript,
+    );
+    publishTranscript(agentTranscriptItemsRef, setAgentTranscript);
+  }
 }
 
 function shouldDisableMicProcessing(): boolean {

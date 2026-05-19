@@ -194,6 +194,20 @@ export const api = {
       method: "POST",
     }),
 
+  importDrills: (yamlText: string) =>
+    fetch("/api/drills/import", {
+      method: "POST",
+      headers: { "content-type": "application/x-yaml" },
+      body: yamlText,
+    }).then(async (res) => {
+      const json = (await res.json()) as {
+        ok: boolean;
+        imported: number;
+        skipped: { id?: string; error: string }[];
+      };
+      return { status: res.status, ...json };
+    }),
+
   drafts: () =>
     jsonFetch<{
       count: number;

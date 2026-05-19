@@ -14,7 +14,8 @@ const timeoutMs = Number(process.env.REALTIME_SMOKE_TIMEOUT_MS ?? 90000);
 const started = [];
 
 async function main() {
-  const audioFile = await findAudioFile();
+  const sourceAudioFile = await findAudioFile();
+  const audioFile = await withLeadSilence(sourceAudioFile);
   const audio = await wavInfo(audioFile);
 
   if (!(await httpOk(`${backendUrl}/api/health`))) {
@@ -66,10 +67,22 @@ async function main() {
     });
     await page.getByRole("button", { name: "Start session" }).click();
     await page.getByTestId("start-voice").waitFor({ state: "visible" });
-    await page.getByTestId("start-voice").click();
 
     await page.waitForFunction(
       () => window.__drillRealtimeDebug?.status === "connected",
+      undefined,
+      { timeout: 45000 },
+    );
+    await page.waitForFunction(
+      () => {
+        const events = window.__drillRealtimeDebug?.events ?? [];
+        return events.some(
+          (event) =>
+            event.type === "response.output_audio_transcript.delta" ||
+            event.type === "response.output_audio_transcript.done" ||
+            event.type === "response.output_audio.done",
+        );
+      },
       undefined,
       { timeout: 45000 },
     );
@@ -209,6 +222,12 @@ async function main() {
     }
 
     const debug = await page.evaluate(() => window.__drillRealtimeDebug);
+    const questionAudioEvents = (debug?.events ?? []).filter(
+      (event) =>
+        event.type === "response.output_audio_transcript.delta" ||
+        event.type === "response.output_audio_transcript.done" ||
+        event.type === "response.output_audio.done",
+    );
     const toolCalls = (debug?.events ?? []).filter(
       (e) => e.type === "tool_call.handled",
     );
@@ -223,11 +242,13 @@ async function main() {
       JSON.stringify(
         {
           ok: true,
+          sourceAudioFile,
           audioFile,
           audio,
           transcriptLength,
           debugStatus: debug?.status ?? null,
           debugErrors: debug?.errors ?? [],
+          questionAudioEventCount: questionAudioEvents.length,
           toolCallCount: toolCalls.length,
           toolNames: [...new Set(toolCalls.map((e) => e.state))].filter(Boolean),
           recentEventTypes: (debug?.events ?? []).map((event) => event.type).slice(-25),
@@ -255,6 +276,7 @@ async function main() {
         {
           ok: false,
           error: err instanceof Error ? err.message : String(err),
+          sourceAudioFile,
           audioFile,
           audio,
           screenshot,
@@ -295,6 +317,18 @@ async function findAudioFile() {
   if (process.env.REALTIME_SMOKE_AUDIO) {
     return path.resolve(process.env.REALTIME_SMOKE_AUDIO);
   }
+  // Pick a mid-length recording. Very short clips often produce empty ASR
+  // transcripts, and very long clips can spend the whole wait budget before
+  // the agent reaches speech_stopped. For 16 kHz mono 16-bit Mumbli output,
+  // 25 s is about 800 KB and 90 s is about 2.88 MB.
+  const minBytes = Number(process.env.REALTIME_SMOKE_AUDIO_MIN_BYTES ?? 800_000);
+  const maxBytes = Number(process.env.REALTIME_SMOKE_AUDIO_MAX_BYTES ?? 3_000_000);
+  const targetBytes = Number(
+    process.env.REALTIME_SMOKE_AUDIO_TARGET_BYTES ?? 1_350_000,
+  );
+  const maxAgeMs = Number(
+    process.env.REALTIME_SMOKE_AUDIO_MAX_AGE_MS ?? 7 * 24 * 60 * 60 * 1000,
+  );
   const recordingsDir =
     process.env.MUMBLI_RECORDINGS_DIR ??
     path.join(os.homedir(), "Library", "Application Support", "Mumbli", "recordings");
@@ -304,11 +338,20 @@ async function findAudioFile() {
     if (!entry.isFile() || !entry.name.endsWith(".wav")) continue;
     const file = path.join(recordingsDir, entry.name);
     const stat = await fs.stat(file);
-    if (stat.size >= 32000) files.push({ file, mtimeMs: stat.mtimeMs });
+    if (maxAgeMs > 0 && Date.now() - stat.mtimeMs > maxAgeMs) continue;
+    if (stat.size < minBytes) continue;
+    if (stat.size > maxBytes) continue;
+    files.push({ file, mtimeMs: stat.mtimeMs, bytes: stat.size });
   }
-  files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  files.sort(
+    (a, b) =>
+      Math.abs(a.bytes - targetBytes) - Math.abs(b.bytes - targetBytes) ||
+      b.mtimeMs - a.mtimeMs,
+  );
   if (!files[0]) {
-    throw new Error(`No usable Mumbli WAV found in ${recordingsDir}`);
+    throw new Error(
+      `No usable Mumbli WAV in ${recordingsDir} (need ${minBytes}-${maxBytes} bytes; override with REALTIME_SMOKE_AUDIO)`,
+    );
   }
   return files[0].file;
 }
@@ -336,6 +379,49 @@ async function wavInfo(file) {
   } finally {
     await handle.close();
   }
+}
+
+async function withLeadSilence(file) {
+  const leadSeconds = Number(
+    process.env.REALTIME_SMOKE_LEAD_SILENCE_SECONDS ?? 12,
+  );
+  const tailSeconds = Number(
+    process.env.REALTIME_SMOKE_TAIL_SILENCE_SECONDS ?? 5,
+  );
+  if (leadSeconds <= 0 && tailSeconds <= 0) return file;
+  const input = await fs.readFile(file);
+  if (
+    input.length < 44 ||
+    input.toString("ascii", 0, 4) !== "RIFF" ||
+    input.toString("ascii", 8, 12) !== "WAVE"
+  ) {
+    return file;
+  }
+  const header = Buffer.from(input.subarray(0, 44));
+  const channels = header.readUInt16LE(22);
+  const sampleRate = header.readUInt32LE(24);
+  const bitsPerSample = header.readUInt16LE(34);
+  const bytesPerFrame = channels * (bitsPerSample / 8);
+  const bytesPerSecond = sampleRate * bytesPerFrame;
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return file;
+  const leadSilenceBytes =
+    Math.floor((Math.max(0, leadSeconds) * bytesPerSecond) / bytesPerFrame) *
+    bytesPerFrame;
+  const tailSilenceBytes =
+    Math.floor((Math.max(0, tailSeconds) * bytesPerSecond) / bytesPerFrame) *
+    bytesPerFrame;
+  const output = Buffer.concat([
+    header,
+    Buffer.alloc(leadSilenceBytes),
+    input.subarray(44),
+    Buffer.alloc(tailSilenceBytes),
+  ]);
+  header.writeUInt32LE(output.length - 8, 4);
+  header.writeUInt32LE(output.length - 44, 40);
+  header.copy(output, 0, 0, 44);
+  const padded = path.join(os.tmpdir(), `realtime-smoke-audio-${Date.now()}.wav`);
+  await fs.writeFile(padded, output);
+  return padded;
 }
 
 async function httpOk(url) {

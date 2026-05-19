@@ -10,6 +10,19 @@ export function createApp(): Express {
   const app = express();
 
   app.use(express.json({ limit: "256kb" }));
+  // Accept raw YAML for /api/drills/import so the same file the export
+  // endpoint produces can be POSTed straight back.
+  app.use(
+    express.text({
+      limit: "512kb",
+      type: [
+        "application/x-yaml",
+        "application/yaml",
+        "text/yaml",
+        "text/x-yaml",
+      ],
+    }),
+  );
   app.use(
     cors({
       origin: (origin, cb) => {

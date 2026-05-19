@@ -306,6 +306,117 @@ test("tool-call dispatch: get_next_drill rejects wrong user", async () => {
   assert.ok(ok.json.result.drill_id, "should return a drill_id");
 });
 
+test("GET /api/drills/export.yaml round-trips active drills (LOCAL.md §16 seed format)", async () => {
+  const YAML = (await import("yaml")).default;
+
+  const res = await fetch(`${base}/api/drills/export.yaml`, { headers });
+  assert.equal(res.status, 200);
+  assert.match(
+    res.headers.get("content-type") ?? "",
+    /yaml/,
+    "expected YAML content-type",
+  );
+  const text = await res.text();
+  assert.ok(text.length > 0, "non-empty body");
+  const parsed = YAML.parse(text) as Array<{
+    id: string;
+    is_active: boolean;
+    rubric: { must_have: string[]; nice_to_have: string[]; red_flags: string[] };
+    canonical_short_answer: string;
+  }>;
+  assert.ok(Array.isArray(parsed) && parsed.length >= 2);
+  for (const drill of parsed) {
+    assert.ok(drill.id, "every drill needs an id");
+    assert.ok(drill.canonical_short_answer, `${drill.id} missing canonical_short_answer`);
+    assert.ok(Array.isArray(drill.rubric.must_have));
+    // Export shouldn't smuggle drafts in by default.
+    assert.equal(drill.is_active, true, `${drill.id} should be active in default export`);
+  }
+
+  // include_drafts=1 must include inactive drafts too.
+  const withDrafts = await fetch(
+    `${base}/api/drills/export.yaml?include_drafts=1`,
+    { headers },
+  );
+  assert.equal(withDrafts.status, 200);
+  const parsedWithDrafts = YAML.parse(await withDrafts.text()) as Array<{
+    id: string;
+    is_active: boolean;
+  }>;
+  assert.ok(parsedWithDrafts.length >= parsed.length, "drafts add to export");
+});
+
+test("POST /api/drills/import round-trips with export.yaml", async () => {
+  const exportRes = await fetch(`${base}/api/drills/export.yaml`, { headers });
+  assert.equal(exportRes.status, 200);
+  const yamlText = await exportRes.text();
+  assert.ok(yamlText.length > 0);
+
+  // Re-import the exact same YAML — every entry should upsert, none skipped.
+  const reimport = await fetch(`${base}/api/drills/import`, {
+    method: "POST",
+    headers: { ...headers, "content-type": "application/x-yaml" },
+    body: yamlText,
+  });
+  assert.equal(reimport.status, 200);
+  const r = (await reimport.json()) as {
+    ok: boolean;
+    imported: number;
+    skipped: { error: string }[];
+  };
+  assert.equal(r.ok, true);
+  assert.ok(r.imported >= 2);
+  assert.equal(r.skipped.length, 0);
+
+  // JSON-wrapped form should also work.
+  const tinyDrill = {
+    id: "import_test_001",
+    topic: "import_test",
+    subtopic: "happy_path",
+    difficulty: 2,
+    trap_type: null,
+    question_text: "Imported drill — minimal valid shape.",
+    expected_answer: { must_have: ["something"], nice_to_have: [], red_flags: [] },
+    rubric: { must_have: ["something"], nice_to_have: [], red_flags: [] },
+    canonical_short_answer: "A minimal but valid canonical answer.",
+    canonical_deep_answer: null,
+    tags: [],
+    is_active: true,
+  };
+  const YAML = (await import("yaml")).default;
+  const jsonForm = await http<{ ok: boolean; imported: number }>(
+    "POST",
+    "/api/drills/import",
+    { yaml: YAML.stringify([tinyDrill]) },
+  );
+  assert.equal(jsonForm.status, 200);
+  assert.equal(jsonForm.json.imported, 1);
+
+  // Invalid YAML returns 207 with details rather than crashing.
+  const bad = await fetch(`${base}/api/drills/import`, {
+    method: "POST",
+    headers: { ...headers, "content-type": "application/x-yaml" },
+    body: "- id: bad\n  topic: x\n  this_is: invalid",
+  });
+  assert.equal(bad.status, 207);
+  const badJson = (await bad.json()) as {
+    ok: boolean;
+    imported: number;
+    skipped: { error: string }[];
+  };
+  assert.equal(badJson.ok, false);
+  assert.equal(badJson.imported, 0);
+  assert.ok(badJson.skipped.length >= 1);
+
+  // Empty body → 400.
+  const empty = await fetch(`${base}/api/drills/import`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({}),
+  });
+  assert.equal(empty.status, 400);
+});
+
 test("PATCH /api/drills/:id updates rubric without changing is_active", async () => {
   const before = await http<{ drills: { id: string; is_active: boolean }[] }>(
     "GET",

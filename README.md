@@ -193,6 +193,8 @@ Verdict: `>= 0.80 pass`, `0.60–0.79 borderline`, `< 0.60 fail`.
 | `GET`  | `/api/progress` | per-topic weakness state |
 | `GET`  | `/api/drills` | drill bank browse (active only) |
 | `GET`  | `/api/drills/drafts` | Layer-3 LLM drafts (is_active=false) |
+| `GET`  | `/api/drills/export.yaml` | dump active drills as YAML (seed format); `?include_drafts=1` to include drafts |
+| `POST` | `/api/drills/import` | upsert drills from YAML body (or `{ yaml: "…" }`); 207 with per-item errors when partial |
 | `POST` | `/api/drills/:id/activate` | promote a draft into the rotation pool |
 | `PATCH` | `/api/drills/:id` | edit rubric / canonical answer / difficulty / question text |
 | `POST` | `/api/drills/:id/test-grade` | dry-run grader against a sample answer (no persist) |
@@ -307,6 +309,48 @@ curl -s -X POST localhost:4000/api/drill-attempts/$ATT/grade \
   -d '{"transcript":"composite B-tree on (category_id, price), equality then order, verify with EXPLAIN ANALYZE","duration_seconds":45}' | jq
 ```
 
+## Voice UX affordances
+
+LOCAL.md §5 / §11 call for the agent to "ask the question aloud" and the
+session to feel like a fast back-and-forth. The frontend gives you four
+visual confirmations so you can tell at a glance whether the voice loop is
+healthy, even with audio output muted:
+
+* **Voice-first start** — clicking *Start session* / *Next drill* chains
+  `startSession → nextDrill → realtime.start` in one click. No separate
+  "Start voice" step.
+* **Coach (audio) transcript** (`data-testid="agent-transcript"`) — the
+  agent's spoken transcript appears above the answer textarea as it
+  speaks. If your speakers fail, you still see exactly what the coach
+  said.
+* **Voice state badge** (`data-testid="voice-state"`) — `🔊 Coach
+  speaking` (highlighted) vs `🎤 Listening` (dim), derived from
+  `response.output_audio_buffer.started` / `response.done` events on the
+  data channel.
+* **Mic meter** (`data-testid="mic-meter"`) — 5-bar VU pulled from a
+  Web Audio `AnalyserNode` on the local mic track, sampled at ~10 Hz.
+  If the bars never light up, your mic is dead.
+* **Voice error banner** (`data-testid="voice-error-banner"`) — when
+  the WebRTC handshake or the ephemeral token mint fails, a red banner
+  appears with the message and a short troubleshooting hint (mic
+  permission · `OPENAI_API_KEY` on backend · HTTPS/localhost).
+
+### Audio troubleshooting
+
+If clicking *Start voice* connects but you hear nothing, in order of
+likelihood:
+
+1. **Browser autoplay** is silently rejecting the `<audio>` element's
+   `play()`. Click anywhere on the page after voice connects — that's a
+   user gesture. If it still won't play, open dev tools and check for
+   `NotAllowedError`.
+2. **Your output device** is muted or routed somewhere unexpected.
+   The Coach (audio) transcript will still update — if it does, audio
+   *is* arriving, you just can't hear it.
+3. **Stale dev server.** Use one Vite instance; if you have multiple
+   tabs on different ports (5173, 5174, …) you may be running older
+   code that pre-dates the autonomy nudge or voice-first flow.
+
 ## Testing & smoke
 
 Three layers, fastest to slowest:
@@ -320,13 +364,23 @@ Three layers, fastest to slowest:
 | Realtime multi-turn | `pnpm smoke:realtime:multi` | same harness, longer wait (~90 s), asserts **≥ 2 distinct** tool calls — proves the agent runs the actual drill loop (e.g. `submit_answer_transcript` then `grade_attempt`) rather than just calling `get_next_drill` once and stopping. |
 | Realtime autonomy | `pnpm smoke:realtime:loop` | strictest — wait up to ~2 min, asserts **≥ 3 total tool calls including `get_next_drill`**. Proves the agent calls `submit_answer_transcript` → `grade_attempt` → `get_next_drill` autonomously. Verifies LOCAL.md §18 ("backend owns curriculum, model drives it"). |
 
-Run everything:
+Run everything offline in one shot:
 
 ```bash
-pnpm -r test                # unit
-pnpm smoke:drill-loop       # offline REST loop
-pnpm smoke:browser          # offline browser loop
-pnpm smoke:realtime         # online realtime
+pnpm check          # build + tests + REST smoke + browser smoke
+```
+
+Same command CI uses. The realtime smokes are separate because they need
+`OPENAI_API_KEY`:
+
+```bash
+pnpm -r test                  # unit + route tests
+pnpm smoke:drill-loop         # offline REST loop
+pnpm smoke:browser            # offline browser loop
+pnpm smoke:realtime           # online realtime (>=1 tool call)
+pnpm smoke:realtime:multi     # online (>=2 distinct tool names)
+pnpm smoke:realtime:loop      # online (>=3 calls incl. get_next_drill)
+pnpm smoke:realtime:end       # online ("Stop" → end_session_summary)
 ```
 
 ### Useful overrides

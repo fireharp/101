@@ -14,7 +14,8 @@
     "smoke:realtime:loop": "REALTIME_SMOKE_REQUIRE_LOOP=1 node scripts/realtime-webrtc-smoke.mjs",
     "smoke:realtime:end": "REALTIME_SMOKE_REQUIRE_END=1 node scripts/realtime-webrtc-smoke.mjs",
     "smoke:drill-loop": "node scripts/drill-loop-smoke.mjs",
-    "smoke:browser": "node scripts/drill-loop-browser-smoke.mjs"
+    "smoke:browser": "node scripts/drill-loop-browser-smoke.mjs",
+    "check": "pnpm build && pnpm test && pnpm smoke:drill-loop && pnpm smoke:browser"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

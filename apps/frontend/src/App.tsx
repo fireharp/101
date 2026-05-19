@@ -33,6 +33,7 @@ export function App() {
 
   const startedAtRef = useRef<number | null>(null);
   const tickRef = useRef<number | null>(null);
+  const pushedVoiceDrillRef = useRef<string | null>(null);
   const realtime = useRealtime();
 
   // Stream realtime transcript into the textarea once captured.
@@ -42,8 +43,13 @@ export function App() {
 
   // When a new drill is selected while voice is live, push it to the agent.
   useEffect(() => {
-    if (drill && realtime.status === "connected") {
+    if (
+      drill &&
+      realtime.status === "connected" &&
+      pushedVoiceDrillRef.current !== drill.attempt_id
+    ) {
       realtime.pushDrill(drill.question_text);
+      pushedVoiceDrillRef.current = drill.attempt_id;
     }
   }, [drill, realtime.pushDrill, realtime.status]);
 
@@ -187,11 +193,15 @@ export function App() {
               style={{ marginTop: "0.9rem", marginBottom: "0.5rem" }}
             >
               <button
-                onClick={() =>
-                  realtime.status === "connected"
-                    ? realtime.stop()
-                    : realtime.start(drill?.question_text)
-                }
+                data-testid="start-voice"
+                onClick={() => {
+                  if (realtime.status === "connected") {
+                    void realtime.stop();
+                    return;
+                  }
+                  if (drill) pushedVoiceDrillRef.current = drill.attempt_id;
+                  void realtime.start(drill?.question_text);
+                }}
                 disabled={realtime.status === "connecting"}
               >
                 {realtime.status === "connected"
@@ -209,6 +219,7 @@ export function App() {
             </div>
 
             <textarea
+              data-testid="transcript"
               className="transcript"
               placeholder="Speak (voice on) or type your answer here. Press Submit to grade."
               value={transcript}

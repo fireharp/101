@@ -22,6 +22,35 @@ type Status =
   | "stopping"
   | "error";
 
+type RealtimeServerEvent = {
+  type?: string;
+  item_id?: string;
+  transcript?: string;
+  delta?: string;
+  error?: { message?: string };
+};
+
+type RealtimeDebugEvent = {
+  type: string;
+  at: number;
+  state?: string;
+  message?: string;
+  deltaLength?: number;
+  transcriptLength?: number;
+};
+
+type RealtimeDebug = {
+  status: string;
+  events: RealtimeDebugEvent[];
+  errors: string[];
+};
+
+declare global {
+  interface Window {
+    __drillRealtimeDebug?: RealtimeDebug;
+  }
+}
+
 export interface RealtimeHandle {
   status: Status;
   error: string | null;
@@ -42,6 +71,7 @@ export function useRealtime(): RealtimeHandle {
   const dcRef = useRef<RTCDataChannel | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const transcriptItemsRef = useRef<Map<string, string>>(new Map());
 
   const send = useCallback((event: Record<string, unknown>) => {
     const dc = dcRef.current;
@@ -49,8 +79,7 @@ export function useRealtime(): RealtimeHandle {
     dc.send(JSON.stringify(event));
   }, []);
 
-  const stop = useCallback(async () => {
-    setStatus("stopping");
+  const closeRealtime = useCallback(async () => {
     try {
       dcRef.current?.close();
     } catch {
@@ -70,8 +99,15 @@ export function useRealtime(): RealtimeHandle {
     dcRef.current = null;
     pcRef.current = null;
     micStreamRef.current = null;
-    setStatus("idle");
   }, []);
+
+  const stop = useCallback(async () => {
+    setStatus("stopping");
+    recordDebugStatus("stopping");
+    await closeRealtime();
+    setStatus("idle");
+    recordDebugStatus("idle");
+  }, [closeRealtime]);
 
   const pushDrill = useCallback(
     (question: string) => {
@@ -80,12 +116,12 @@ export function useRealtime(): RealtimeHandle {
         type: "conversation.item.create",
         item: {
           type: "message",
-          role: "system",
+          role: "user",
           content: [
             {
               type: "input_text",
               text:
-                "Current drill (ask the user aloud, exactly once, then wait for their answer):\n" +
+                "Ask me this drill aloud, exactly once, then wait for my spoken answer:\n" +
                 question.trim(),
             },
           ],
@@ -105,14 +141,29 @@ export function useRealtime(): RealtimeHandle {
   const start = useCallback(async (initialDrill?: string) => {
     setError(null);
     setTranscript("");
+    transcriptItemsRef.current.clear();
     setStatus("connecting");
+    resetDebug();
     try {
       const token = await api.realtimeToken();
       const pc = new RTCPeerConnection();
       pcRef.current = pc;
 
+      pc.onconnectionstatechange = () => {
+        recordDebugStatus(`pc:${pc.connectionState}`);
+      };
+      pc.oniceconnectionstatechange = () => {
+        recordDebugEvent("iceconnectionstatechange", {
+          state: pc.iceConnectionState,
+        });
+      };
+      pc.onicecandidateerror = (ev) => {
+        recordDebugError(`ICE candidate error ${ev.errorCode}`);
+      };
+
       // Inbound audio from the model → <audio> element.
       pc.ontrack = (ev) => {
+        recordDebugEvent("track", { state: ev.track.kind });
         const audio = audioElRef.current;
         const stream = ev.streams[0];
         if (audio && stream) {
@@ -124,7 +175,19 @@ export function useRealtime(): RealtimeHandle {
       };
 
       // Microphone.
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rawMic = shouldDisableMicProcessing();
+      const mic = await navigator.mediaDevices.getUserMedia({
+        audio: rawMic
+          ? {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            }
+          : true,
+      });
+      recordDebugEvent("getUserMedia.ok", {
+        state: rawMic ? "raw" : "default",
+      });
       micStreamRef.current = mic;
       for (const track of mic.getTracks()) {
         pc.addTrack(track, mic);
@@ -136,6 +199,7 @@ export function useRealtime(): RealtimeHandle {
 
       dc.onopen = () => {
         setStatus("connected");
+        recordDebugStatus("connected");
         if (initialDrill) {
           pushDrill(initialDrill);
         } else {
@@ -148,11 +212,24 @@ export function useRealtime(): RealtimeHandle {
           });
         }
       };
+      dc.onclose = () => recordDebugStatus("datachannel:closed");
+      dc.onerror = () => recordDebugError("data channel error");
 
       dc.onmessage = (msg) => {
         try {
-          const ev = JSON.parse(msg.data);
-          handleEvent(ev, setTranscript);
+          const ev = JSON.parse(msg.data) as RealtimeServerEvent;
+          recordDebugEvent(ev.type ?? "server_event", {
+            deltaLength:
+              typeof ev.delta === "string" ? ev.delta.length : undefined,
+            transcriptLength:
+              typeof ev.transcript === "string"
+                ? ev.transcript.length
+                : undefined,
+          });
+          if (ev.type === "error") {
+            recordDebugError(ev.error?.message ?? "Realtime server error");
+          }
+          handleEvent(ev, transcriptItemsRef, setTranscript);
         } catch {
           /* non-JSON, ignore */
         }
@@ -182,11 +259,13 @@ export function useRealtime(): RealtimeHandle {
       const answer = { type: "answer" as const, sdp: await sdpResp.text() };
       await pc.setRemoteDescription(answer);
     } catch (err) {
-      setError((err as Error).message);
+      const message = (err as Error).message;
+      recordDebugError(message);
+      await closeRealtime();
+      setError(message);
       setStatus("error");
-      await stop();
     }
-  }, [send, stop]);
+  }, [closeRealtime, pushDrill, send]);
 
   useEffect(() => {
     return () => {
@@ -207,22 +286,80 @@ export function useRealtime(): RealtimeHandle {
 }
 
 function handleEvent(
-  ev: { type?: string; transcript?: string; delta?: string },
-  setTranscript: (updater: (prev: string) => string) => void,
+  ev: RealtimeServerEvent,
+  transcriptItemsRef: { current: Map<string, string> },
+  setTranscriptText: (text: string) => void,
 ): void {
   // Accumulate user input audio transcript so we have something to grade.
   if (
     ev.type === "conversation.item.input_audio_transcription.completed" &&
     typeof ev.transcript === "string"
   ) {
-    const text = ev.transcript;
-    setTranscript((prev) => (prev ? `${prev}\n${text}` : text));
+    transcriptItemsRef.current.set(ev.item_id ?? "__completed", ev.transcript);
+    publishTranscript(transcriptItemsRef, setTranscriptText);
     return;
   }
   if (
     ev.type === "conversation.item.input_audio_transcription.delta" &&
     typeof ev.delta === "string"
   ) {
-    setTranscript((prev) => prev + ev.delta);
+    const itemId = ev.item_id ?? "__streaming";
+    const previous = transcriptItemsRef.current.get(itemId) ?? "";
+    transcriptItemsRef.current.set(itemId, previous + ev.delta);
+    publishTranscript(transcriptItemsRef, setTranscriptText);
+  }
+}
+
+function publishTranscript(
+  transcriptItemsRef: { current: Map<string, string> },
+  setTranscriptText: (text: string) => void,
+): void {
+  setTranscriptText(
+    Array.from(transcriptItemsRef.current.values()).filter(Boolean).join("\n"),
+  );
+}
+
+function shouldDisableMicProcessing(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  return (
+    params.get("debugMic") === "raw" ||
+    import.meta.env.VITE_REALTIME_RAW_MIC === "1"
+  );
+}
+
+function getDebug(): RealtimeDebug {
+  window.__drillRealtimeDebug ??= { status: "idle", events: [], errors: [] };
+  return window.__drillRealtimeDebug;
+}
+
+function resetDebug(): void {
+  window.__drillRealtimeDebug = {
+    status: "connecting",
+    events: [],
+    errors: [],
+  };
+  recordDebugEvent("status", { state: "connecting" });
+}
+
+function recordDebugStatus(status: string): void {
+  getDebug().status = status;
+  recordDebugEvent("status", { state: status });
+}
+
+function recordDebugError(message: string): void {
+  const debug = getDebug();
+  debug.status = "error";
+  debug.errors.push(message);
+  recordDebugEvent("error", { message });
+}
+
+function recordDebugEvent(
+  type: string,
+  details: Omit<RealtimeDebugEvent, "type" | "at"> = {},
+): void {
+  const debug = getDebug();
+  debug.events.push({ type, at: Date.now(), ...details });
+  if (debug.events.length > 100) {
+    debug.events.splice(0, debug.events.length - 100);
   }
 }

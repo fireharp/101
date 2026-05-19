@@ -8,7 +8,8 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "dev:backend": "pnpm --filter @drill/backend dev",
-    "dev:frontend": "pnpm --filter @drill/frontend dev"
+    "dev:frontend": "pnpm --filter @drill/frontend dev",
+    "smoke:realtime": "node scripts/realtime-webrtc-smoke.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

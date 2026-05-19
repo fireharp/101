@@ -63,6 +63,8 @@ pnpm --filter @drill/backend seed   # re-seed drills from YAML
 | `DATABASE_PATH` | `apps/backend/data/drill.db` | SQLite file |
 | `OPENAI_API_KEY` | — | required for realtime + LLM grading |
 | `OPENAI_REALTIME_MODEL` | `gpt-realtime-2` | LOCAL.md §17 default |
+| `OPENAI_REALTIME_TRANSCRIPTION_MODEL` | `gpt-4o-mini-transcribe` | ASR model for user audio transcript events |
+| `OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE` | — | optional language hint, e.g. `en` |
 | `OPENAI_GRADING_MODEL` | `gpt-4.1-mini` | text grading after attempt |
 | `REALTIME_VOICE` | `marin` | voice id |
 | `FRONTEND_ORIGIN` | `http://localhost:5173` | CORS allowlist |
@@ -187,4 +189,23 @@ ATT=$(curl -s -X POST localhost:4000/api/drill-sessions/$SID/next \
 curl -s -X POST localhost:4000/api/drill-attempts/$ATT/grade \
   -H 'content-type: application/json' \
   -d '{"transcript":"composite B-tree on (category_id, price), equality then order, verify with EXPLAIN ANALYZE","duration_seconds":45}' | jq
+```
+
+## Realtime WebRTC smoke
+
+```bash
+pnpm smoke:realtime
+```
+
+The smoke starts local servers if needed, launches Chromium with a fake
+microphone, feeds the latest usable Mumbli WAV via
+`--use-file-for-fake-audio-capture`, and passes when the textarea receives a
+non-empty input transcript. It reports transcript length and a screenshot path,
+but does not print the transcript text.
+
+Useful overrides:
+
+```bash
+REALTIME_SMOKE_AUDIO="/absolute/path/sample.wav" pnpm smoke:realtime
+HEADLESS=0 pnpm smoke:realtime
 ```

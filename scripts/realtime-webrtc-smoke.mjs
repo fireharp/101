@@ -234,15 +234,21 @@ async function main() {
     const toolWaitErr = await page
       .waitForFunction(
         ({ multi, loop, end }) => {
-          const events = window.__drillRealtimeDebug?.events ?? [];
-          const handled = events.filter((e) => e.type === "tool_call.handled");
+          const debug = window.__drillRealtimeDebug ?? {};
+          const events = debug.events ?? [];
+          const handled = [
+            ...events.filter((e) => e.type === "tool_call.handled"),
+            ...(debug.toolCalls ?? []),
+          ];
           if (end) {
             return handled.some((e) => e.state === "end_session_summary");
           }
           if (!multi && !loop) return handled.length >= 1;
           const names = handled.map((e) => e.state).filter(Boolean);
           if (loop) {
-            return handled.length >= 3 && names.includes("get_next_drill");
+            return ["submit_answer_transcript", "grade_attempt", "get_next_drill"].every(
+              (name) => names.includes(name),
+            );
           }
           return new Set(names).size >= 2;
         },
@@ -281,9 +287,10 @@ async function main() {
         event.type === "response.output_audio_transcript.done" ||
         event.type === "response.output_audio.done",
     );
-    const toolCalls = (debug?.events ?? []).filter(
-      (e) => e.type === "tool_call.handled",
-    );
+    const toolCalls = [
+      ...(debug?.events ?? []).filter((e) => e.type === "tool_call.handled"),
+      ...(debug?.toolCalls ?? []),
+    ];
     const screenshot = path.join(
       os.tmpdir(),
       `realtime-webrtc-smoke-${Date.now()}.png`,

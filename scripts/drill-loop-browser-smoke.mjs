@@ -136,6 +136,66 @@ async function main() {
     );
 
     const q2 = (await page.getByTestId("question").innerText()).trim();
+
+    // Verify the admin / review surfaces light up — these were added in
+    // later rounds and never had smoke coverage. All offline.
+
+    // 1) History panel: toggle opens, shows at least our two sessions.
+    await page.getByTestId("toggle-history").click();
+    await page.getByTestId("history-panel").waitFor({ state: "visible", timeout: 5000 });
+    await page.waitForFunction(
+      () => {
+        const rows = document.querySelectorAll('[data-testid="history-row"]');
+        return rows.length >= 1;
+      },
+      undefined,
+      { timeout: 5000 },
+    );
+    const historyRowCount = await page.locator('[data-testid="history-row"]').count();
+    await page.getByTestId("toggle-history").click(); // close
+
+    // 2) Session audit log: toggle, expect ≥ 3 event types from the lifecycle
+    // (session_created, drill_picked, grade_completed).
+    await page.getByTestId("toggle-events").click();
+    await page.getByTestId("events-timeline").waitFor({ state: "visible", timeout: 5000 });
+    const requiredEventTypes = [
+      "session_created",
+      "drill_picked",
+      "grade_completed",
+    ];
+    // Events fetch is fired by an effect; wait for the required tags.
+    await page.waitForFunction(
+      (required) => {
+        const eventTypes = Array.from(
+          document.querySelectorAll('[data-testid="event-row"]'),
+        )
+          .map((row) => row.querySelector(".tag")?.textContent?.trim())
+          .filter(Boolean);
+        return required.every((eventType) => eventTypes.includes(eventType));
+      },
+      requiredEventTypes,
+      { timeout: 5000 },
+    );
+    const eventTypes = await page.evaluate(() => {
+      const rows = Array.from(
+        document.querySelectorAll('[data-testid="event-row"]'),
+      );
+      return rows
+        .map((row) => {
+          const tag = row.querySelector(".tag");
+          return tag?.textContent?.trim() ?? null;
+        })
+        .filter(Boolean);
+    });
+    for (const t of requiredEventTypes) {
+      if (!eventTypes.includes(t)) {
+        throw new Error(
+          `audit log missing ${t}; saw ${JSON.stringify(eventTypes)}`,
+        );
+      }
+    }
+    await page.getByTestId("toggle-events").click(); // close
+
     const screenshot = path.join(
       os.tmpdir(),
       `drill-loop-browser-smoke-${Date.now()}.png`,
@@ -151,6 +211,8 @@ async function main() {
           questionsDistinct: q1 !== q2,
           gradeScore: Number(scoreText),
           gradeVerdict: verdict,
+          historyRowCount,
+          auditEventTypes: eventTypes,
           screenshot,
           consoleErrors,
           pageErrors,

@@ -78,6 +78,17 @@ export function App() {
       exposure_count: number;
     }[]
   >([]);
+  const [troubleDrills, setTroubleDrills] = useState<
+    {
+      drill_id: string;
+      topic: string;
+      subtopic: string;
+      question_text: string;
+      attempts: number;
+      avg_score: number;
+      last_score: number | null;
+    }[]
+  >([]);
   const [dueCards, setDueCards] = useState<
     {
       id: string;
@@ -131,6 +142,21 @@ export function App() {
   >(null);
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [ending, setEnding] = useState(false);
+  const [expandedAttemptId, setExpandedAttemptId] = useState<string | null>(
+    null,
+  );
+  const [attemptDetail, setAttemptDetail] = useState<{
+    attempt: {
+      id: string;
+      transcript: string | null;
+      duration_seconds: number | null;
+      score: number | null;
+      verdict: "pass" | "borderline" | "fail" | null;
+      missed_points: string[] | null;
+      ideal_answer: string | null;
+    };
+    drill: { question_text: string } | null;
+  } | null>(null);
   const [drillCount, setDrillCount] = useState(0);
   const [pressureMode, setPressureMode] = useState(false);
   const [realtimeSettings, setRealtimeSettings] = useState<RealtimeSettings>(
@@ -638,13 +664,29 @@ export function App() {
 
   const refreshSidecar = useCallback(async () => {
     try {
-      const [prog, due] = await Promise.all([
+      const [prog, due, perf] = await Promise.all([
         api.progress(),
         api.cardsDue(30),
+        api.progressDrills(8),
       ]);
       setProgress(prog.skills);
       setDueCards(due.cards);
       setCardStats(due.stats);
+      // "Trouble drills" = lowest avg_score among drills with >=2 attempts.
+      setTroubleDrills(
+        perf.drills
+          .filter((d) => d.attempts >= 2)
+          .slice(0, 3)
+          .map((d) => ({
+            drill_id: d.drill_id,
+            topic: d.topic,
+            subtopic: d.subtopic,
+            question_text: d.question_text,
+            attempts: d.attempts,
+            avg_score: d.avg_score,
+            last_score: d.last_score,
+          })),
+      );
     } catch (e) {
       // sidecar is non-fatal — surface but keep going
       console.warn("sidecar refresh failed:", (e as Error).message);
@@ -816,6 +858,28 @@ export function App() {
     try {
       const r = await api.recentSessions(25);
       setRecentSessions(r.sessions);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, []);
+
+  const onExpandAttempt = useCallback(async (attemptId: string) => {
+    setExpandedAttemptId(attemptId);
+    setAttemptDetail(null);
+    try {
+      const r = await api.attemptDetail(attemptId);
+      setAttemptDetail({
+        attempt: {
+          id: r.attempt.id,
+          transcript: r.attempt.transcript,
+          duration_seconds: r.attempt.duration_seconds,
+          score: r.attempt.score,
+          verdict: r.attempt.verdict,
+          missed_points: r.attempt.missed_points,
+          ideal_answer: r.attempt.ideal_answer,
+        },
+        drill: r.drill ? { question_text: r.drill.question_text } : null,
+      });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -1254,6 +1318,97 @@ export function App() {
                 );
               })}
           </div>
+          {troubleDrills.length > 0 && (
+            <div
+              data-testid="trouble-drills"
+              style={{
+                marginTop: "0.6rem",
+                paddingTop: "0.5rem",
+                borderTop: "1px solid var(--border)",
+              }}
+            >
+              <div
+                className="row"
+                style={{ alignItems: "center", marginBottom: "0.3rem" }}
+              >
+                <strong
+                  style={{
+                    fontSize: "0.78rem",
+                    letterSpacing: "0.02em",
+                  }}
+                >
+                  Trouble drills
+                </strong>
+                <span
+                  className="muted"
+                  style={{ fontSize: "0.7rem", marginLeft: "0.4rem" }}
+                >
+                  bottom-3 avg, ≥ 2 attempts
+                </span>
+              </div>
+              <div style={{ display: "grid", gap: "0.25rem" }}>
+                {troubleDrills.map((d) => {
+                  const avgPct = Math.round((d.avg_score ?? 0) * 100);
+                  const lastPct =
+                    d.last_score === null
+                      ? null
+                      : Math.round(d.last_score * 100);
+                  return (
+                    <div
+                      key={d.drill_id}
+                      className="row"
+                      style={{
+                        alignItems: "baseline",
+                        gap: "0.4rem",
+                        fontSize: "0.76rem",
+                      }}
+                      title={d.question_text.trim()}
+                    >
+                      <span
+                        className="tag"
+                        style={{ background: "var(--bad)", color: "#0c1220" }}
+                      >
+                        avg {avgPct}
+                      </span>
+                      {lastPct !== null && (
+                        <span
+                          className="tag"
+                          style={{
+                            background:
+                              lastPct > avgPct ? "var(--good)" : "transparent",
+                            color: lastPct > avgPct ? "#0c1220" : "inherit",
+                          }}
+                        >
+                          last {lastPct}
+                        </span>
+                      )}
+                      <span className="muted">
+                        {d.topic} · {d.subtopic}
+                      </span>
+                      <span
+                        className="muted"
+                        style={{
+                          flex: 1,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          marginLeft: "0.2rem",
+                        }}
+                      >
+                        {d.question_text.trim().slice(0, 80)}
+                      </span>
+                      <span
+                        className="muted"
+                        style={{ fontSize: "0.7rem" }}
+                      >
+                        {d.attempts} attempts
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1665,28 +1820,95 @@ export function App() {
                 gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
               }}
             >
-              {summary.attempts.map((a) => (
-                <div className="card" key={a.attempt_id}>
-                  <div className="row" style={{ alignItems: "center" }}>
-                    {a.topic && <span className="tag">{a.topic}</span>}
-                    {a.subtopic && <span className="tag">{a.subtopic}</span>}
-                    {a.score !== null && (
-                      <span
-                        className={`tag verdict-${a.verdict ?? ""}`}
-                        style={{ marginLeft: "auto" }}
-                      >
-                        {Math.round(a.score * 100)} · {a.verdict}
+              {summary.attempts.map((a) => {
+                const isExpanded = expandedAttemptId === a.attempt_id;
+                return (
+                  <div
+                    className="card"
+                    key={a.attempt_id}
+                    data-testid="summary-attempt"
+                    style={{ cursor: "pointer" }}
+                    onClick={() =>
+                      isExpanded
+                        ? setExpandedAttemptId(null)
+                        : void onExpandAttempt(a.attempt_id)
+                    }
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        if (isExpanded) setExpandedAttemptId(null);
+                        else void onExpandAttempt(a.attempt_id);
+                      }
+                    }}
+                  >
+                    <div className="row" style={{ alignItems: "center" }}>
+                      {a.topic && <span className="tag">{a.topic}</span>}
+                      {a.subtopic && <span className="tag">{a.subtopic}</span>}
+                      {a.score !== null && (
+                        <span
+                          className={`tag verdict-${a.verdict ?? ""}`}
+                          style={{ marginLeft: "auto" }}
+                        >
+                          {Math.round(a.score * 100)} · {a.verdict}
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      className="muted"
+                      style={{ fontSize: "0.78rem", marginTop: "0.2rem" }}
+                    >
+                      {a.duration_seconds ?? 0}s · {a.drill_id}{" "}
+                      <span aria-hidden="true">
+                        {isExpanded ? "▾" : "▸"}
                       </span>
+                    </div>
+                    {isExpanded && attemptDetail && (
+                      <div
+                        data-testid="attempt-detail"
+                        style={{
+                          marginTop: "0.5rem",
+                          paddingTop: "0.4rem",
+                          borderTop: "1px solid var(--border)",
+                          fontSize: "0.78rem",
+                          display: "grid",
+                          gap: "0.35rem",
+                        }}
+                      >
+                        {attemptDetail.drill && (
+                          <div className="muted">
+                            <em>
+                              {attemptDetail.drill.question_text.trim()}
+                            </em>
+                          </div>
+                        )}
+                        {attemptDetail.attempt.transcript && (
+                          <div>
+                            <span className="muted">your answer: </span>
+                            {attemptDetail.attempt.transcript}
+                          </div>
+                        )}
+                        {(attemptDetail.attempt.missed_points ?? []).length >
+                          0 && (
+                          <div>
+                            <span className="muted">missed: </span>
+                            {(attemptDetail.attempt.missed_points ?? []).join(
+                              " · ",
+                            )}
+                          </div>
+                        )}
+                        {attemptDetail.attempt.ideal_answer && (
+                          <div>
+                            <span className="muted">ideal: </span>
+                            {attemptDetail.attempt.ideal_answer}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
-                  <div
-                    className="muted"
-                    style={{ fontSize: "0.78rem", marginTop: "0.2rem" }}
-                  >
-                    {a.duration_seconds ?? 0}s · {a.drill_id}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>

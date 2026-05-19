@@ -246,6 +246,37 @@ apiRouter.post(
 );
 
 /* ------------------------------------------------------------------ */
+/* GET /api/drill-attempts/:id                                        */
+/* Full attempt detail (transcript, missed_points, ideal_answer,      */
+/* created_cards). Owner-scoped — 403 for the wrong user.             */
+/* ------------------------------------------------------------------ */
+apiRouter.get("/drill-attempts/:id", (req: Request, res: Response) => {
+  const userId = userIdFromRequest(req);
+  const attemptId = String(req.params.id ?? "");
+  if (!attemptId) return res.status(400).json({ error: "missing id" });
+  const attempt = attempts.get(attemptId);
+  if (!attempt) return res.status(404).json({ error: "attempt not found" });
+  if (attempt.user_id !== userId) {
+    return res.status(403).json({ error: "attempt not owned by user" });
+  }
+  const drill = drills.get(attempt.drill_id);
+  res.json({
+    attempt,
+    drill: drill
+      ? {
+          id: drill.id,
+          topic: drill.topic,
+          subtopic: drill.subtopic,
+          difficulty: drill.difficulty,
+          question_text: drill.question_text,
+          canonical_short_answer: drill.canonical_short_answer,
+          rubric: drill.rubric,
+        }
+      : null,
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* POST /api/drill-attempts/:id/transcript                            */
 /* Stores transcript + duration for an attempt.                       */
 /* ------------------------------------------------------------------ */

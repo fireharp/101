@@ -95,6 +95,7 @@ export type RealtimeDebugEvent = {
 type RealtimeDebug = {
   status: string;
   events: RealtimeDebugEvent[];
+  toolCalls?: RealtimeDebugEvent[];
   errors: string[];
   rawFunctionCallEvents?: unknown[];
 };
@@ -638,7 +639,7 @@ export function useRealtime(): RealtimeHandle {
     return () => {
       unmountStopTimerRef.current = window.setTimeout(() => {
         void stop();
-      }, 0) as unknown as number;
+      }, 1000) as unknown as number;
     };
   }, [stop]);
 
@@ -832,6 +833,17 @@ async function runToolCall(
     state: call.name,
     deltaLength: JSON.stringify(output).length,
   });
+  const debug = getDebug();
+  debug.toolCalls ??= [];
+  debug.toolCalls.push({
+    type: "tool_call.handled",
+    at: Date.now(),
+    state: call.name,
+    deltaLength: JSON.stringify(output).length,
+  });
+  if (debug.toolCalls.length > 50) {
+    debug.toolCalls.splice(0, debug.toolCalls.length - 50);
+  }
   send({
     type: "conversation.item.create",
     item: {
@@ -1050,6 +1062,7 @@ function resetDebug(): void {
   window.__drillRealtimeDebug = {
     status: "connecting",
     events: [],
+    toolCalls: [],
     errors: [],
   };
   recordDebugEvent("status", { state: "connecting" });
@@ -1073,7 +1086,7 @@ function recordDebugEvent(
 ): void {
   const debug = getDebug();
   debug.events.push({ type, at: Date.now(), ...details });
-  if (debug.events.length > 100) {
-    debug.events.splice(0, debug.events.length - 100);
+  if (debug.events.length > 500) {
+    debug.events.splice(0, debug.events.length - 500);
   }
 }

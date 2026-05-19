@@ -664,6 +664,153 @@ test("PATCH /api/drills/:id updates rubric without changing is_active", async ()
   assert.equal(missing.status, 404);
 });
 
+test("GET /api/sessions lists recent sessions newest-first with rollup stats", async () => {
+  const a = await http<{ session: { id: string } }>(
+    "POST",
+    "/api/drill-sessions",
+    { mode: "mixed" },
+  );
+  const b = await http<{ session: { id: string } }>(
+    "POST",
+    "/api/drill-sessions",
+    { mode: "db_indexes" },
+  );
+
+  const r = await http<{
+    sessions: {
+      id: string;
+      mode: string;
+      started_at: string;
+      ended_at: string | null;
+      drills_attempted: number;
+      drills_graded: number;
+      average_score: number;
+    }[];
+  }>("GET", "/api/sessions?limit=10");
+  assert.equal(r.status, 200);
+  assert.ok(r.json.sessions.length >= 2);
+  const idxA = r.json.sessions.findIndex((s) => s.id === a.json.session.id);
+  const idxB = r.json.sessions.findIndex((s) => s.id === b.json.session.id);
+  assert.ok(idxB >= 0 && idxA >= 0);
+  assert.ok(idxB <= idxA, "b is newer than a → should come first");
+
+  const otherUser = await fetch(`${base}/api/sessions`, {
+    headers: {
+      "content-type": "application/json",
+      "x-user-id": "different-user",
+    },
+  });
+  assert.equal(otherUser.status, 200);
+  const otherJson = (await otherUser.json()) as {
+    sessions: { id: string }[];
+  };
+  assert.ok(
+    !otherJson.sessions.some(
+      (s) => s.id === a.json.session.id || s.id === b.json.session.id,
+    ),
+    "other user should not see our sessions",
+  );
+});
+
+test("GET /api/drill-attempts/:id returns full attempt detail, owner-scoped", async () => {
+  const sess = await http<{ session: { id: string } }>(
+    "POST",
+    "/api/drill-sessions",
+    { mode: "mixed" },
+  );
+  const next = await http<{ drill: { attempt_id: string } }>(
+    "POST",
+    `/api/drill-sessions/${sess.json.session.id}/next`,
+    {},
+  );
+  const attemptId = next.json.drill.attempt_id;
+  await http("POST", `/api/drill-attempts/${attemptId}/grade`, {
+    transcript: "composite B-tree on category_id then price",
+    duration_seconds: 30,
+  });
+
+  const r = await http<{
+    attempt: {
+      id: string;
+      transcript: string | null;
+      score: number | null;
+      verdict: string | null;
+      missed_points: string[] | null;
+      ideal_answer: string | null;
+    };
+    drill: { id: string; topic: string; subtopic: string } | null;
+  }>("GET", `/api/drill-attempts/${attemptId}`);
+  assert.equal(r.status, 200);
+  assert.equal(r.json.attempt.id, attemptId);
+  assert.ok(r.json.attempt.transcript && r.json.attempt.transcript.length > 0);
+  assert.ok(r.json.attempt.score !== null);
+  assert.ok(r.json.drill && r.json.drill.topic);
+
+  // Wrong user gets 403.
+  const wrong = await fetch(`${base}/api/drill-attempts/${attemptId}`, {
+    headers: {
+      "content-type": "application/json",
+      "x-user-id": "different-user",
+    },
+  });
+  assert.equal(wrong.status, 403);
+
+  // Bad id → 404.
+  const missing = await fetch(`${base}/api/drill-attempts/does-not-exist`, {
+    headers,
+  });
+  assert.equal(missing.status, 404);
+});
+
+test("GET /api/progress/drills returns per-drill performance", async () => {
+  const sess = await http<{ session: { id: string } }>(
+    "POST",
+    "/api/drill-sessions",
+    { mode: "mixed" },
+  );
+  const sid = sess.json.session.id;
+  for (let i = 0; i < 2; i++) {
+    const next = await http<{ drill: { attempt_id: string } }>(
+      "POST",
+      `/api/drill-sessions/${sid}/next`,
+      {},
+    );
+    await http(
+      "POST",
+      `/api/drill-attempts/${next.json.drill.attempt_id}/grade`,
+      {
+        transcript: "composite B-tree on (category_id, price)",
+        duration_seconds: 30,
+      },
+    );
+  }
+
+  const r = await http<{
+    drills: {
+      drill_id: string;
+      topic: string;
+      subtopic: string;
+      attempts: number;
+      graded: number;
+      avg_score: number;
+    }[];
+  }>("GET", "/api/progress/drills?limit=10");
+  assert.equal(r.status, 200);
+  assert.ok(r.json.drills.length >= 1);
+  for (let i = 1; i < r.json.drills.length; i++) {
+    assert.ok(
+      (r.json.drills[i]!.avg_score ?? 0) >=
+        (r.json.drills[i - 1]!.avg_score ?? 0),
+      "performance list should be ascending by avg_score",
+    );
+  }
+  for (const row of r.json.drills) {
+    assert.ok(row.topic);
+    assert.ok(row.subtopic);
+    assert.ok(row.graded >= 1);
+  }
+});
+
 test("realtime token endpoint returns 503 without OPENAI_API_KEY", async () => {
   const r = await http<{ error?: string }>("POST", "/api/realtime/token", {});
   assert.equal(r.status, 503);

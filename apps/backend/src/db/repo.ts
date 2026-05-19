@@ -313,7 +313,7 @@ export const sessions = {
          LEFT JOIN drill_attempts a ON a.session_id = s.id
          WHERE s.user_id = ?
          GROUP BY s.id
-         ORDER BY s.started_at DESC
+         ORDER BY s.started_at DESC, s.rowid DESC
          LIMIT ?`,
       )
       .all(userId, limit) as {

@@ -360,6 +360,52 @@ export const api = {
       return { status: res.status, ...json };
     }),
 
+  attemptDetail: (attemptId: string) =>
+    jsonFetch<{
+      attempt: {
+        id: string;
+        user_id: string;
+        session_id: string;
+        drill_id: string;
+        transcript: string | null;
+        duration_seconds: number | null;
+        score: number | null;
+        verdict: "pass" | "borderline" | "fail" | null;
+        missed_points: string[] | null;
+        ideal_answer: string | null;
+        created_cards: { front: string; back: string }[] | null;
+        created_at: string;
+      };
+      drill: {
+        id: string;
+        topic: string;
+        subtopic: string;
+        difficulty: number;
+        question_text: string;
+        canonical_short_answer: string;
+        rubric: { must_have: string[]; nice_to_have: string[]; red_flags: string[] };
+      } | null;
+    }>(`/api/drill-attempts/${attemptId}`),
+
+  progressDrills: (limit = 10) =>
+    jsonFetch<{
+      drills: {
+        drill_id: string;
+        topic: string;
+        subtopic: string;
+        difficulty: number;
+        question_text: string;
+        attempts: number;
+        graded: number;
+        avg_score: number;
+        best_score: number;
+        worst_score: number;
+        last_seen_at: string | null;
+        last_score: number | null;
+        last_verdict: string | null;
+      }[];
+    }>(`/api/progress/drills?limit=${limit}`),
+
   recentSessions: (limit = 25) =>
     jsonFetch<{
       sessions: {

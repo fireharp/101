@@ -7,6 +7,9 @@ The voice agent runs on OpenAI GPT Realtime over WebRTC. The backend owns the
 curriculum, rotation, attempts, grading, and weakness state — the model is the
 voice/interview surface, not the brain (LOCAL.md §18).
 
+For onboarding (architecture, recipes, the test pyramid in detail), see
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## LOCAL.md spec coverage
 
 | LOCAL.md section | Status |
@@ -187,10 +190,12 @@ Verdict: `>= 0.80 pass`, `0.60–0.79 borderline`, `< 0.60 fail`.
 | `POST` | `/api/drill-sessions/:id/next` | pick next drill via rotation |
 | `POST` | `/api/drill-attempts/:id/transcript` | save transcript + duration |
 | `POST` | `/api/drill-attempts/:id/grade` | grade an attempt (LLM or offline) |
+| `GET`  | `/api/drill-attempts/:id` | full attempt detail (transcript, missed points, ideal answer, cards) — owner-scoped |
 | `GET`  | `/api/cards/due` | due review cards + total/due stats |
 | `POST` | `/api/cards/:id/review` | record SM-2-lite review (`quality` 0/1) |
 | `GET`  | `/api/cards/export.csv` | Anki-importable CSV (`front,back,tags`) |
 | `GET`  | `/api/progress` | per-topic weakness state |
+| `GET`  | `/api/progress/drills` | per-drill performance (attempts, avg/best/worst score, last verdict) sorted by avg ascending |
 | `GET`  | `/api/drills` | drill bank browse (active only) |
 | `GET`  | `/api/drills/drafts` | Layer-3 LLM drafts (is_active=false) |
 | `GET`  | `/api/drills/export.yaml` | dump active drills as YAML (seed format); `?include_drafts=1` to include drafts |

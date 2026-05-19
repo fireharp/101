@@ -1,0 +1,171 @@
+- id: db_index_products_cheapest_001
+  topic: database
+  subtopic: composite_indexes
+  difficulty: 3
+  trap_type: equality_plus_order_by
+  question_text: >
+    You have an ecommerce products table with category_id, seller_id, status,
+    price, and updated_at. The common query filters active products in one
+    category and shows the cheapest first. What index would you create and why?
+  expected_answer:
+    must_have:
+      - composite B-tree index
+      - category_id before price
+      - explains WHERE + ORDER BY + LIMIT
+      - mention query-shape dependence
+    nice_to_have:
+      - partial index WHERE status='active'
+      - covering index if needed
+      - EXPLAIN ANALYZE
+    red_flags:
+      - index every column
+      - hash index for ordered query
+      - price-only index without caveat
+  rubric:
+    must_have:
+      - composite B-tree
+      - category_id before price
+      - equality before range or order
+      - query-shape dependent
+    nice_to_have:
+      - partial index on status active
+      - covering index
+      - write and storage cost
+    red_flags:
+      - index every column
+      - hash index for ordering
+      - price-only index without selectivity
+  canonical_short_answer: >
+    Start with a composite B-tree index on (category_id, price) for
+    WHERE category_id=? ORDER BY price ASC LIMIT N. Equality column first,
+    ordered column second. If status='active' is always present and selective,
+    add a partial index WHERE status='active'. Verify with EXPLAIN ANALYZE
+    because selectivity and real workload matter.
+  canonical_deep_answer: >
+    The exact column order depends on cardinality and query shape. For low-
+    cardinality status with high-cardinality category_id, leading on
+    category_id wins. A covering index that includes price avoids heap
+    lookups but raises write and storage cost.
+  tags: [postgres, mysql, indexing, sql]
+  is_active: true
+
+- id: db_index_partial_active_002
+  topic: database
+  subtopic: partial_indexes
+  difficulty: 3
+  trap_type: hot_filter
+  question_text: >
+    A logs table holds a billion rows. 95% have status='archived' and only 5%
+    are 'active'. Most queries only touch active rows. Default plan is a
+    btree on status. What would you change?
+  expected_answer:
+    must_have:
+      - partial index WHERE status = 'active'
+      - smaller index size
+      - faster scans on hot subset
+    nice_to_have:
+      - vacuum or table partitioning consideration
+      - explain selectivity logic
+    red_flags:
+      - btree on low-cardinality status alone
+      - claim partial index is always smaller without selectivity check
+  rubric:
+    must_have:
+      - partial index on active subset
+      - selectivity reasoning
+      - smaller index reduces IO
+    nice_to_have:
+      - partitioning option
+      - covering for projected columns
+    red_flags:
+      - plain btree on status only
+      - drop the index entirely
+  canonical_short_answer: >
+    Replace the plain btree on status with a partial index WHERE status='active'.
+    Active is only 5% so the index becomes much smaller, IO drops, and queries
+    that filter active rows hit a tight index. Verify with EXPLAIN ANALYZE that
+    the planner picks it.
+  canonical_deep_answer: null
+  tags: [postgres, indexing, selectivity]
+  is_active: true
+
+- id: db_pagination_offset_vs_keyset_003
+  topic: database
+  subtopic: pagination
+  difficulty: 2
+  trap_type: deep_offset
+  question_text: >
+    Your feed endpoint uses LIMIT 50 OFFSET N to paginate a 10M-row table.
+    Page 1 is fast, page 10000 is slow. What is wrong and how would you fix it?
+  expected_answer:
+    must_have:
+      - offset scans skipped rows
+      - cost grows with offset
+      - keyset or seek pagination
+      - index aligned with sort key
+    nice_to_have:
+      - cursor stable under inserts
+      - tradeoff vs random page jump
+    red_flags:
+      - more indexes solve the offset problem
+      - cache the offset
+  rubric:
+    must_have:
+      - offset is O(N + offset)
+      - switch to keyset pagination
+      - index on sort column
+    nice_to_have:
+      - cursor encodes last seen value
+      - composite cursor for ties
+    red_flags:
+      - just add an index
+      - precompute all pages
+  canonical_short_answer: >
+    OFFSET still scans and discards rows so deep pages are linear in offset.
+    Use keyset pagination: WHERE created_at < $cursor ORDER BY created_at DESC
+    LIMIT 50. Cursor uses the last row's sort key, so the index seeks directly
+    and cost stays roughly constant.
+  canonical_deep_answer: null
+  tags: [pagination, postgres, mysql]
+  is_active: true
+
+- id: db_covering_index_writes_004
+  topic: database
+  subtopic: covering_indexes
+  difficulty: 4
+  trap_type: write_cost_blindspot
+  question_text: >
+    A teammate proposes adding INCLUDE(price, name, image_url) to an index so
+    every product list query is index-only. What questions do you ask before
+    approving?
+  expected_answer:
+    must_have:
+      - write amplification cost
+      - storage growth
+      - vacuum or fillfactor cost
+      - read versus write workload mix
+    nice_to_have:
+      - hot updates and HOT chain in postgres
+      - replica lag impact
+    red_flags:
+      - covering indexes are always free
+      - include every column
+  rubric:
+    must_have:
+      - higher write cost
+      - extra storage
+      - workload read write ratio
+    nice_to_have:
+      - vacuum or page split impact
+      - hot updates broken
+    red_flags:
+      - free wins
+      - cover everything
+  canonical_short_answer: >
+    Covering indexes win on read-heavy paths but raise write and storage cost
+    and can break HOT updates. Confirm the query is hot, the workload is
+    read-skewed, and the included columns rarely change. Otherwise the write
+    amplification and bloat may dominate the savings.
+  canonical_deep_answer: null
+  tags: [postgres, indexing, performance]
+  is_active: true

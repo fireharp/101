@@ -1,0 +1,98 @@
+export type Difficulty = 1 | 2 | 3 | 4 | 5;
+
+export type Mode =
+  | "mixed"
+  | "db_indexes"
+  | "system_design"
+  | "weak_topics"
+  | "mock_interview";
+
+export interface Rubric {
+  must_have: string[];
+  nice_to_have: string[];
+  red_flags: string[];
+}
+
+export interface DrillItem {
+  id: string;
+  topic: string;
+  subtopic: string;
+  difficulty: Difficulty;
+  trap_type: string | null;
+  question_text: string;
+  expected_answer: Rubric;
+  rubric: Rubric;
+  canonical_short_answer: string;
+  canonical_deep_answer: string | null;
+  tags: string[];
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface DrillItemRow {
+  id: string;
+  topic: string;
+  subtopic: string;
+  difficulty: number;
+  trap_type: string | null;
+  question_text: string;
+  expected_answer: string;
+  rubric: string;
+  canonical_short_answer: string;
+  canonical_deep_answer: string | null;
+  tags: string;
+  is_active: number;
+  created_at: string;
+}
+
+export interface DrillAttempt {
+  id: string;
+  user_id: string;
+  session_id: string;
+  drill_id: string;
+  transcript: string | null;
+  duration_seconds: number | null;
+  score: number | null;
+  verdict: "pass" | "borderline" | "fail" | null;
+  missed_points: string[] | null;
+  ideal_answer: string | null;
+  created_cards: GeneratedCard[] | null;
+  created_at: string;
+}
+
+export interface GeneratedCard {
+  id?: string;
+  drill_id?: string;
+  front: string;
+  back: string;
+  topic?: string;
+  subtopic?: string;
+  next_due_at?: string;
+}
+
+export interface UserSkillState {
+  user_id: string;
+  topic: string;
+  subtopic: string;
+  exposure_count: number;
+  last_seen_at: string | null;
+  avg_score: number | null;
+  weakness_score: number;
+  next_due_at: string | null;
+}
+
+export interface GradingResult {
+  score: number;
+  verdict: "pass" | "borderline" | "fail";
+  missed_points: string[];
+  ideal_short_answer: string;
+  follow_up_drills: string[];
+  cards: GeneratedCard[];
+  breakdown: {
+    must_have_coverage: number;
+    answer_clarity: number;
+    tradeoff_coverage: number;
+    speed_score: number;
+    red_flag_penalty: number;
+  };
+}

@@ -1,0 +1,27 @@
+LOCAL.md
+.env
+.env.local
+.claude/*.local.md
+.coherence/
+
+# yes we scraped it, but no reason to publish
+.agents/skills/exponent-questions/
+data/exponent/questions/
+
+# node
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+*.log
+.DS_Store
+
+# sqlite
+apps/backend/data/*.db
+apps/backend/data/*.db-journal
+apps/backend/data/*.db-shm
+apps/backend/data/*.db-wal
+
+# misc
+.vite/
+coverage/

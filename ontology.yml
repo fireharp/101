@@ -1,0 +1,38 @@
+version: 1
+# Generic baseline ontology — keep README, docs, and code roughly in sync.
+# Replace these rules with project-specific ones as soon as you know the
+# repository shape.
+
+commands:
+  test:
+    - echo "no test runner configured — set commands.test in ontology.yml"
+  build:
+    - echo "no build configured — set commands.build in ontology.yml"
+
+rules:
+  - id: readme-needs-touch-on-major-change
+    when:
+      - "src/**/*"
+      - "lib/**/*"
+      - "cmd/**/*"
+    expect_any:
+      - "README.md"
+      - "docs/**/*.md"
+      - "CHANGELOG.md"
+    severity: warn
+    message: "Source changed; refresh README, docs, or CHANGELOG so adopters see the diff."
+    suggested_commands:
+      - git diff README.md
+      - git diff docs/
+
+  - id: pre-commit-hook-change-needs-doc
+    when:
+      - ".githooks/pre-commit"
+    expect_any:
+      - "README.md"
+      - "AGENTS.md"
+      - "docs/**/*.md"
+    severity: warn
+    message: "Pre-commit hook changed; note the change in README/AGENTS or docs."
+    suggested_commands:
+      - bash .githooks/pre-commit

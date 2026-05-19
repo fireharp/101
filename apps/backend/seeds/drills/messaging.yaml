@@ -1,0 +1,81 @@
+- id: msg_outbox_pattern_001
+  topic: messaging
+  subtopic: outbox
+  difficulty: 3
+  trap_type: dual_write
+  question_text: >
+    Your service writes to Postgres and publishes an event to Kafka. Sometimes
+    the DB write succeeds and the event never lands, or vice versa. How do
+    you fix this dual-write problem?
+  expected_answer:
+    must_have:
+      - transactional outbox table
+      - separate publisher reads the outbox
+      - atomic DB+outbox write
+      - at-least-once to broker
+    nice_to_have:
+      - CDC alternative
+      - idempotent consumers
+    red_flags:
+      - two-phase commit across DB and Kafka
+      - publish before commit
+  rubric:
+    must_have:
+      - outbox in same transaction
+      - relay process
+      - consumers idempotent
+    nice_to_have:
+      - debezium / CDC
+      - retry-safe publisher
+    red_flags:
+      - distributed 2PC
+      - fire-and-forget after commit
+  canonical_short_answer: >
+    Use the transactional outbox pattern. The write and an outbox row land in
+    the same DB transaction. A separate relay reads unpublished outbox rows
+    and pushes them to Kafka, marking them sent on success. Delivery is
+    at-least-once so consumers must be idempotent. CDC tools like Debezium
+    are an alternative relay.
+  canonical_deep_answer: null
+  tags: [kafka, outbox, eventing]
+  is_active: true
+
+- id: msg_kafka_partition_key_002
+  topic: messaging
+  subtopic: kafka_partitioning
+  difficulty: 3
+  trap_type: ordering_vs_throughput
+  question_text: >
+    You produce 100k order events per second to a Kafka topic. Consumers must
+    process events for the same order in order. How do you partition?
+  expected_answer:
+    must_have:
+      - partition by order_id
+      - ordering only within a partition
+      - throughput vs ordering tradeoff
+      - number of partitions affects parallelism
+    nice_to_have:
+      - hot partition risk for popular orders
+      - sticky producer batching
+    red_flags:
+      - global ordering
+      - partition by timestamp
+  rubric:
+    must_have:
+      - key by order_id
+      - ordering scope
+      - partition count tradeoff
+    nice_to_have:
+      - hot key mitigation
+      - consumer group sizing
+    red_flags:
+      - round-robin keying
+      - assume cross-partition order
+  canonical_short_answer: >
+    Partition by order_id so all events for one order land in the same
+    partition and consumers see them in order. Kafka only guarantees order
+    within a partition. Pick a partition count that bounds per-consumer
+    throughput and watch out for hot orders that overload a single partition.
+  canonical_deep_answer: null
+  tags: [kafka, ordering, streaming]
+  is_active: true

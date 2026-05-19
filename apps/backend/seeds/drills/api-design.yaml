@@ -1,0 +1,79 @@
+- id: api_idempotent_post_001
+  topic: api_design
+  subtopic: idempotency
+  difficulty: 2
+  trap_type: post_retry
+  question_text: >
+    A client calls POST /payments and the network drops the response. The
+    client retries. How do you keep the API safe from duplicate payments?
+  expected_answer:
+    must_have:
+      - client-supplied Idempotency-Key
+      - server stores key plus response
+      - same key returns cached result
+      - "scope: per endpoint and per actor"
+    nice_to_have:
+      - TTL on idempotency record
+      - return original status code on replay
+    red_flags:
+      - claim POST is naturally idempotent
+      - dedupe by request body hash only
+  rubric:
+    must_have:
+      - explicit idempotency key
+      - persisted server-side
+      - replay returns same response
+    nice_to_have:
+      - TTL bound
+      - scope correctness
+    red_flags:
+      - assume PUT semantics on POST
+      - body-hash only
+  canonical_short_answer: >
+    Require an Idempotency-Key header on POST. The server persists key plus
+    serialized response in a unique-constrained table. On retry with the same
+    key, return the stored response. Scope keys per actor and endpoint and
+    expire them after a sensible window.
+  canonical_deep_answer: null
+  tags: [api, idempotency, http]
+  is_active: true
+
+- id: api_versioning_002
+  topic: api_design
+  subtopic: versioning
+  difficulty: 2
+  trap_type: breaking_change
+  question_text: >
+    You need to rename a field in a public REST API and change its semantics.
+    Mobile clients update slowly. How do you roll this out?
+  expected_answer:
+    must_have:
+      - additive change first
+      - dual emit old and new fields
+      - version bump only when truly breaking
+      - deprecation timeline communicated
+    nice_to_have:
+      - feature flag per client
+      - log usage of deprecated field
+    red_flags:
+      - rename in place
+      - flip semantics behind same field name
+  rubric:
+    must_have:
+      - additive then deprecated then removed
+      - never silently change semantics
+      - communicate timeline
+    nice_to_have:
+      - observability on deprecated usage
+      - per-client gating
+    red_flags:
+      - breaking change with no version
+      - reuse field for new meaning
+  canonical_short_answer: >
+    Treat it as additive first. Emit both the old and new fields, document
+    the new one, log usage of the old one, and only remove it when telemetry
+    shows old clients are gone. If the semantics truly change, version the
+    endpoint and let clients opt in.
+  canonical_deep_answer: null
+  tags: [api, versioning, rollout]
+  is_active: true

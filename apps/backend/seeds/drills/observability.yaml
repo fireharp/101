@@ -1,0 +1,40 @@
+- id: obs_p99_investigation_001
+  topic: observability
+  subtopic: latency
+  difficulty: 3
+  trap_type: average_blindness
+  question_text: >
+    The average latency of an endpoint is fine but p99 is 5 seconds. Users
+    complain. Walk through how you investigate.
+  expected_answer:
+    must_have:
+      - look at p99 over time and per dependency
+      - distinguish queueing, dependency, cold start, GC pause
+      - traces for slow requests
+      - resource saturation check
+    nice_to_have:
+      - tail latency sampling
+      - retry amplification
+    red_flags:
+      - optimize average
+      - assume averages mean tail
+  rubric:
+    must_have:
+      - reject average as signal
+      - per-endpoint per-dependency p99
+      - tracing slow requests
+    nice_to_have:
+      - saturation and GC
+      - retry storms
+    red_flags:
+      - chase mean
+      - micro-optimize before measuring
+  canonical_short_answer: >
+    Ignore the average. Pull p95 and p99 latency per endpoint and per
+    downstream dependency, then traces for a handful of slow requests.
+    Common offenders: dependency latency, queueing, GC or runtime pauses,
+    cold starts, retry storms. Fix the bottleneck shown in traces, not the
+    average.
+  canonical_deep_answer: null
+  tags: [latency, observability, slo]
+  is_active: true

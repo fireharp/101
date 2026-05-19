@@ -1,0 +1,249 @@
+- id: sd_rate_limiter_token_bucket_001
+  topic: system_design
+  subtopic: rate_limiting
+  difficulty: 3
+  trap_type: bucket_choice
+  question_text: >
+    Design a per-user API rate limiter that allows short bursts but caps long-
+    term throughput. Which algorithm and why? How do you store state across
+    a multi-node service?
+  expected_answer:
+    must_have:
+      - token bucket
+      - allow bursts up to bucket size
+      - refill at sustained rate
+      - shared store like Redis
+    nice_to_have:
+      - sliding window log alternative
+      - clock skew handling
+      - per-user vs per-IP keying
+    red_flags:
+      - leaky bucket as identical to token bucket
+      - in-memory only across nodes
+  rubric:
+    must_have:
+      - token bucket
+      - burst plus sustained
+      - centralized state
+    nice_to_have:
+      - atomic Lua or INCR with TTL
+      - failure mode if Redis down
+    red_flags:
+      - local memory across nodes
+      - confusing rate and quota
+  canonical_short_answer: >
+    Use a token bucket: bucket size sets burst, refill rate sets sustained
+    throughput. Store the bucket per user in Redis using an atomic
+    decrement-or-refill script. Decide what happens if Redis is unreachable:
+    fail open or fail closed.
+  canonical_deep_answer: null
+  tags: [rate_limiting, redis, scaling]
+  is_active: true
+
+- id: sd_idempotency_atleastonce_002
+  topic: system_design
+  subtopic: delivery_semantics
+  difficulty: 4
+  trap_type: at_least_once
+  question_text: >
+    Your payment service consumes a queue with at-least-once delivery. The
+    worker calls a charge API and updates the DB. How do you avoid double
+    charges?
+  expected_answer:
+    must_have:
+      - idempotency key
+      - dedupe table or unique constraint
+      - upstream charge API also idempotent
+      - retries are safe by design
+    nice_to_have:
+      - outbox or transactional dedupe
+      - DLQ for poison messages
+    red_flags:
+      - exactly-once delivery from the broker
+      - rely on consumer ack ordering only
+  rubric:
+    must_have:
+      - idempotency key
+      - durable dedupe store
+      - upstream idempotency support
+    nice_to_have:
+      - outbox pattern
+      - DLQ
+    red_flags:
+      - claim exactly-once
+      - trust order alone
+  canonical_short_answer: >
+    Treat the broker as at-least-once and build idempotency in the worker.
+    Generate an idempotency key per message, persist (key → result) in a
+    unique-constrained table, and make the charge API call use the same key.
+    Retries become safe replays, not double charges.
+  canonical_deep_answer: null
+  tags: [queues, idempotency, payments]
+  is_active: true
+
+- id: sd_cache_aside_invalidation_003
+  topic: system_design
+  subtopic: caching
+  difficulty: 3
+  trap_type: stale_read
+  question_text: >
+    A product page reads from Redis cache-aside in front of Postgres. After a
+    price update the page sometimes shows the old price for minutes. What is
+    wrong and how do you fix it?
+  expected_answer:
+    must_have:
+      - explicit cache invalidation on write
+      - or short TTL with version key
+      - write-through or write-around tradeoff
+      - race between reader populating stale value and writer
+    nice_to_have:
+      - SET NX on populate
+      - background refresh strategy
+    red_flags:
+      - just lower TTL to 0
+      - never cache
+  rubric:
+    must_have:
+      - invalidation on write
+      - read-then-populate race
+      - choose strategy with reason
+    nice_to_have:
+      - versioned keys
+      - lock or single-flight populate
+    red_flags:
+      - delete cache before db write
+      - rely on time alone
+  canonical_short_answer: >
+    Cache-aside has a classic race: reader sees miss, fetches old value, then
+    writer updates the DB and the reader populates the stale value. Fix by
+    deleting the cache after the DB write, using a short TTL, or moving to
+    write-through with a versioned key. Combine TTL plus invalidation in
+    practice.
+  canonical_deep_answer: null
+  tags: [caching, redis, consistency]
+  is_active: true
+
+- id: sd_read_replica_lag_004
+  topic: system_design
+  subtopic: replication
+  difficulty: 3
+  trap_type: replication_lag
+  question_text: >
+    Your service writes to a primary Postgres and reads from a replica. After
+    a user submits a form, the next GET sometimes returns the old data. What
+    is happening and what are your options?
+  expected_answer:
+    must_have:
+      - replication lag
+      - read your writes problem
+      - route post-write reads to primary
+      - or wait for LSN
+    nice_to_have:
+      - sticky session
+      - synchronous replication tradeoff
+    red_flags:
+      - eliminate the replica
+      - always read from primary
+  rubric:
+    must_have:
+      - lag explanation
+      - read-your-writes strategy
+      - tradeoff named
+    nice_to_have:
+      - LSN tracking
+      - causal consistency token
+    red_flags:
+      - claim no lag with async
+      - force sync everywhere
+  canonical_short_answer: >
+    Async replication means the replica trails the primary. Right after a
+    write the user is asking the replica before the change arrives. Route
+    post-write reads to the primary for a short window, track the write's
+    LSN and wait for the replica to catch up, or accept eventual consistency
+    where business allows.
+  canonical_deep_answer: null
+  tags: [postgres, replication, scaling]
+  is_active: true
+
+- id: sd_hot_shard_005
+  topic: system_design
+  subtopic: sharding
+  difficulty: 4
+  trap_type: hot_key
+  question_text: >
+    You hash-shard a write-heavy table by tenant_id. One tenant is 50x larger
+    than the rest and saturates its shard. How do you mitigate the hot shard?
+  expected_answer:
+    must_have:
+      - identify hot tenant
+      - split that tenant across multiple shards
+      - sub-sharding by composite key
+      - rebalance cost
+    nice_to_have:
+      - request coalescing
+      - per-tenant rate limits
+      - move to range or hybrid sharding
+    red_flags:
+      - just add more shards globally
+      - reshard everything live
+  rubric:
+    must_have:
+      - sub-shard the hot tenant
+      - composite shard key
+      - rebalance plan
+    nice_to_have:
+      - dual-write during migration
+      - per-tenant capacity
+    red_flags:
+      - blanket scale up
+      - hash on tenant only forever
+  canonical_short_answer: >
+    Hash-by-tenant collapses when one tenant is huge. Pin the hot tenant to a
+    composite shard key like (tenant_id, sub_bucket) so its load spreads
+    across N shards, while small tenants stay tenant-only. Migrate with
+    dual-write and backfill, and watch rebalance cost.
+  canonical_deep_answer: null
+  tags: [sharding, scaling, postgres]
+  is_active: true
+
+- id: sd_queue_choice_006
+  topic: system_design
+  subtopic: queues
+  difficulty: 2
+  trap_type: queue_mismatch
+  question_text: >
+    You need a job queue for image processing. Volume is bursty: 0 then 5000
+    jobs in 30 seconds. Jobs are slow, idempotent, and can be retried. Pick
+    a queue technology and justify.
+  expected_answer:
+    must_have:
+      - durable queue
+      - parallel consumers
+      - retry with backoff
+      - idempotency awareness
+    nice_to_have:
+      - DLQ
+      - visibility timeout vs long-running jobs
+    red_flags:
+      - pubsub with no durability
+      - in-process queue
+  rubric:
+    must_have:
+      - durability
+      - parallelism
+      - retry semantics
+    nice_to_have:
+      - visibility timeout reasoning
+      - autoscale workers
+    red_flags:
+      - direct synchronous call
+      - non-durable broker
+  canonical_short_answer: >
+    Use a durable queue like SQS, Redis Streams, or RabbitMQ with parallel
+    workers, exponential backoff retries, and a DLQ for poison messages.
+    Workers must be idempotent because at-least-once delivery is the
+    realistic guarantee. Set visibility timeout above the worst-case job
+    runtime.
+  canonical_deep_answer: null
+  tags: [queues, async, scaling]
+  is_active: true

@@ -1,0 +1,83 @@
+- id: cc_optimistic_vs_pessimistic_001
+  topic: concurrency
+  subtopic: locking
+  difficulty: 3
+  trap_type: lock_choice
+  question_text: >
+    Two users try to book the last seat on a flight at the same time. How do
+    you guarantee only one succeeds? Compare optimistic and pessimistic
+    approaches.
+  expected_answer:
+    must_have:
+      - pessimistic SELECT ... FOR UPDATE
+      - or optimistic version column with conditional update
+      - one writer wins, others retry or get an error
+      - transaction boundary
+    nice_to_have:
+      - serializable isolation alternative
+      - deadlock risk and ordering
+    red_flags:
+      - check-then-write without lock
+      - app-level mutex across nodes
+  rubric:
+    must_have:
+      - row-level lock or version check
+      - exactly-one winner
+      - explicit transaction
+    nice_to_have:
+      - retry on optimistic failure
+      - deadlock awareness
+    red_flags:
+      - in-memory lock
+      - read then write without protection
+  canonical_short_answer: >
+    Pessimistic: BEGIN, SELECT seat FOR UPDATE, check available, UPDATE,
+    COMMIT. Other transactions block until commit. Optimistic: read seat with
+    a version, UPDATE seat SET booked=true WHERE id=? AND version=?; if zero
+    rows affected, the caller retries. Optimistic scales better under low
+    contention; pessimistic is simpler under high contention.
+  canonical_deep_answer: null
+  tags: [postgres, transactions, concurrency]
+  is_active: true
+
+- id: cc_distributed_lock_002
+  topic: concurrency
+  subtopic: distributed_locks
+  difficulty: 4
+  trap_type: redlock_misuse
+  question_text: >
+    You need to ensure only one worker runs a nightly cron across N nodes.
+    Someone suggests a Redis SETNX lock with a TTL. Where does this go wrong
+    and what do you do about it?
+  expected_answer:
+    must_have:
+      - TTL too short and lock expires mid-job
+      - TTL too long and crash holds lock
+      - fencing token for correctness
+      - lock is an optimization, not safety
+    nice_to_have:
+      - lease renewal heartbeat
+      - idempotent job design
+    red_flags:
+      - Redlock alone is exactly-once
+      - rely only on SETNX with no fencing
+  rubric:
+    must_have:
+      - TTL tradeoff
+      - fencing token
+      - lock is advisory
+    nice_to_have:
+      - heartbeat extension
+      - job idempotency
+    red_flags:
+      - guaranteed mutual exclusion claim
+      - no fallback on lock loss
+  canonical_short_answer: >
+    SETNX with TTL gives you mutual exclusion most of the time, not always.
+    If the holder pauses past the TTL, another worker grabs the lock and you
+    have two runners. Use a monotonic fencing token that downstream writes
+    validate, design the job to be idempotent, and treat the lock as an
+    optimization rather than a safety net.
+  canonical_deep_answer: null
+  tags: [redis, locks, distributed]
+  is_active: true

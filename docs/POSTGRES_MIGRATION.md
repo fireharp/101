@@ -48,17 +48,24 @@ the exact swap.
    switch to `await db.query(text, params)` and adjust the call sites to
    async. The dialect deltas:
 
-   | SQLite                              | Postgres                                 |
-   | ----------------------------------- | ---------------------------------------- |
-   | `datetime('now')`                   | `NOW()`                                  |
-   | `datetime('now', '+1 day')`         | `NOW() + interval '1 day'`               |
-   | `INSERT OR IGNORE`                  | `INSERT ... ON CONFLICT DO NOTHING`      |
-   | `?` placeholders                    | `$1`, `$2`, ... placeholders             |
-  | `TEXT` ids                          | `TEXT` ids (keeps slug drill IDs + demo users compatible) |
-  | `INTEGER` (booleans as 0/1)         | `BOOLEAN` (true/false)                   |
-   | `TEXT` storing JSON strings         | `JSONB` (no `JSON.parse` needed)         |
-   | `RETURNING ...` (already supported) | `RETURNING ...` (same)                   |
-   | `db.transaction(fn)`                | `await pool.connect()` + `BEGIN/COMMIT`  |
+   | SQLite                                       | Postgres                                 |
+   | -------------------------------------------- | ---------------------------------------- |
+   | `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`      | `NOW()`                                  |
+   | `strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+1 day')` | `NOW() + interval '1 day'`           |
+   | `datetime(col) <= datetime('now')`           | `col <= NOW()` (native TIMESTAMPTZ compare) |
+   | `INSERT OR IGNORE`                           | `INSERT ... ON CONFLICT DO NOTHING`      |
+   | `?` placeholders                             | `$1`, `$2`, ... placeholders             |
+   | `TEXT` ids                                   | `TEXT` ids (keeps slug drill IDs + demo users compatible) |
+   | `INTEGER` (booleans as 0/1)                  | `BOOLEAN` (true/false)                   |
+   | `TEXT` storing JSON strings                  | `JSONB` (no `JSON.parse` needed)         |
+   | `RETURNING ...` (already supported)          | `RETURNING ...` (same)                   |
+   | `db.transaction(fn)`                         | `await pool.connect()` + `BEGIN/COMMIT`  |
+
+   The ISO-8601 backfill in `runMigrations()` (lines that rewrite naive
+   `YYYY-MM-DD HH:MM:SS` rows to `…T…Z` form) is a SQLite-only legacy
+   compatibility step. On Postgres, `TIMESTAMPTZ` always stores UTC
+   internally and the driver serialises to ISO 8601 with timezone on read
+   — delete that backfill block when porting.
 
 5. Delete `runMigrations()`'s embedded SQL or replace it with `pg`'s
    `pool.query(fs.readFileSync('migrations/postgres.sql'))` so dev parity

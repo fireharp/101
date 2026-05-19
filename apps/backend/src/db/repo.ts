@@ -718,13 +718,17 @@ export const events = {
    * log (LOCAL.md §13).
    *
    * `types` filters by event_type (OR-match). `sinceIso` filters by
-   * created_at ≥ that ISO timestamp. Both are optional; with neither set
-   * this returns the most-recent `limit` admin events.
+   * created_at ≥ that ISO timestamp. `actor` filters by
+   * `payload.actor` exact match (rows written before actor attribution
+   * landed have no `actor` field and are excluded — correct behavior).
+   * All optional; with none set this returns the most-recent `limit`
+   * admin events.
    */
   listAdmin(opts: {
     limit?: number;
     types?: EventType[];
     sinceIso?: string;
+    actor?: string;
   } = {}): SessionEvent[] {
     const limit = Math.max(1, Math.min(500, opts.limit ?? 100));
     const clauses = ["session_id = ?"];
@@ -740,6 +744,12 @@ export const events = {
       // so the comparison is on parsed timestamps, not raw strings.
       clauses.push("datetime(created_at) >= datetime(?)");
       params.push(opts.sinceIso);
+    }
+    if (opts.actor) {
+      // json_extract returns NULL for rows that have no `actor` key, which
+      // correctly excludes pre-attribution rows from the filter result.
+      clauses.push("json_extract(payload, '$.actor') = ?");
+      params.push(opts.actor);
     }
     params.push(limit);
     const rows = db

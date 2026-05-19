@@ -10,6 +10,18 @@ Format: each phase groups related work. Newer phases at the top.
 Tooling that turns "is this still working?" from a 20-minute manual
 audit into one command.
 
+- **ISO 8601 timestamps end-to-end** — SQLite schema defaults switched
+  from `datetime('now')` (naive `YYYY-MM-DD HH:MM:SS`) to
+  `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')` (ISO 8601 with `Z`). All
+  programmatic timestamps (`sessions.end`, `skillState.upsertAfterAttempt`,
+  card scheduling) use the same format. `sessions.create` and
+  `attempts.createPending` now use `RETURNING` so the in-memory object
+  matches the persisted row exactly. A one-shot backfill in
+  `runMigrations` normalises any pre-existing naive rows (idempotent).
+  Fixes a latent UI bug where `Date.parse(stored)` interpreted naive
+  timestamps as local time instead of UTC. Regression-locked by a route
+  test that asserts every API-emitted timestamp matches the ISO regex.
+
 - **`pnpm dev:doctor`** — environment diagnostic: Node, pnpm, env file,
   `OPENAI_API_KEY`, `better-sqlite3` native binding (the most common
   fresh-clone breakage), DB writability, port availability, Playwright
@@ -89,7 +101,10 @@ back-and-forth" — backed up with visible UI affordances.
 - **Admin audit trail** — drill imports, draft activate / deactivate /
   discard, and rubric edits write to `session_events` under sentinel
   `__admin__` and surface via `GET /api/admin/events`. The PATCH
-  rubric handler records which fields changed. Supports `?type=` (CSV
+  rubric handler records which fields changed. Every event payload
+  carries the `actor` (`x-user-id`) so the audit answers *who* did it,
+  forward-compatible with the LOCAL.md §15 deferred multi-user admin
+  scope (no schema change — payload is JSON). Supports `?type=` (CSV
   of admin event types, invalid types return 400 with the allow-list),
   `?since=` (ISO 8601, normalised via SQLite `datetime()` so the
   comparison crosses the T-vs-space format gap), and `?limit=` (1–500).

@@ -148,10 +148,10 @@ async function generate(args: CliArgs) {
       is_active: false,
     };
     drillsRepo.upsert(drill);
-    inserted.push({
-      ...drill,
-      created_at: new Date().toISOString(),
-    });
+    // Read back so created_at reflects the actual persisted timestamp
+    // (DB default on first insert, or the original value on upsert).
+    const persisted = drillsRepo.get(id);
+    if (persisted) inserted.push(persisted);
   }
 
   return inserted;

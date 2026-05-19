@@ -813,6 +813,7 @@ apiRouter.post("/drills/import", (req: Request, res: Response) => {
   }
   const result = importDrillsFromYaml(yamlText);
   events.log(ADMIN_AUDIT_SESSION_ID, "drill_imported", {
+    actor: userIdFromRequest(req),
     imported: result.imported,
     skipped: result.skipped.length,
   });
@@ -863,7 +864,10 @@ apiRouter.post("/drills/:id/activate", (req: Request, res: Response) => {
   const ok = drills.setActive(id, true);
   if (!ok) return res.status(404).json({ error: "drill not found" });
   const drill = drills.get(id);
-  events.log(ADMIN_AUDIT_SESSION_ID, "draft_activated", { drill_id: id });
+  events.log(ADMIN_AUDIT_SESSION_ID, "draft_activated", {
+    actor: userIdFromRequest(req),
+    drill_id: id,
+  });
   res.json({ ok: true, drill });
 });
 
@@ -879,7 +883,10 @@ apiRouter.post("/drills/:id/deactivate", (req: Request, res: Response) => {
   const ok = drills.setActive(id, false);
   if (!ok) return res.status(404).json({ error: "drill not found" });
   const drill = drills.get(id);
-  events.log(ADMIN_AUDIT_SESSION_ID, "draft_deactivated", { drill_id: id });
+  events.log(ADMIN_AUDIT_SESSION_ID, "draft_deactivated", {
+    actor: userIdFromRequest(req),
+    drill_id: id,
+  });
   res.json({ ok: true, drill });
 });
 
@@ -898,7 +905,11 @@ apiRouter.delete("/drills/:id", (req: Request, res: Response) => {
     });
   }
   const ok = drills.remove(id, true);
-  if (ok) events.log(ADMIN_AUDIT_SESSION_ID, "draft_discarded", { drill_id: id });
+  if (ok)
+    events.log(ADMIN_AUDIT_SESSION_ID, "draft_discarded", {
+      actor: userIdFromRequest(req),
+      drill_id: id,
+    });
   res.json({ ok });
 });
 
@@ -935,6 +946,7 @@ apiRouter.patch("/drills/:id", (req: Request, res: Response) => {
   const updated = drills.patch(id, parsed.data);
   if (!updated) return res.status(404).json({ error: "drill not found" });
   events.log(ADMIN_AUDIT_SESSION_ID, "rubric_edited", {
+    actor: userIdFromRequest(req),
     drill_id: id,
     fields_changed: Object.keys(parsed.data),
   });
@@ -986,7 +998,12 @@ apiRouter.get("/admin/events", (req: Request, res: Response) => {
     sinceIso = parsed.toISOString();
   }
 
-  res.json({ events: events.listAdmin({ limit, types, sinceIso }) });
+  const actor =
+    typeof req.query.actor === "string" && req.query.actor.length > 0
+      ? req.query.actor
+      : undefined;
+
+  res.json({ events: events.listAdmin({ limit, types, sinceIso, actor }) });
 });
 
 /* ------------------------------------------------------------------ */

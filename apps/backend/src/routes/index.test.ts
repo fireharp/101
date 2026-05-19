@@ -572,6 +572,151 @@ test("GET /api/admin/events 'since' filter excludes older events and rejects gar
   assert.match(bad.json.error, /invalid 'since'/);
 });
 
+test("timestamps round-trip as ISO 8601 with Z (no naive 'YYYY-MM-DD HH:MM:SS' leaks)", async () => {
+  const isoRe = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+
+  // 1. Freshly created session — both started_at (DB default) and any later
+  //    summary read should be ISO with Z.
+  const sess = await http<{ session: { id: string; started_at: string } }>(
+    "POST",
+    "/api/drill-sessions",
+    {},
+  );
+  assert.match(
+    sess.json.session.started_at,
+    isoRe,
+    `started_at should be ISO 8601 with Z; got ${sess.json.session.started_at}`,
+  );
+
+  // 2. Drill_picked → grade flow lays down attempts; the audit timeline must
+  //    return events with the same shape.
+  await http("POST", `/api/drill-sessions/${sess.json.session.id}/next`, {});
+  const ts = await http<{
+    events: { created_at: string }[];
+  }>("GET", `/api/drill-sessions/${sess.json.session.id}/events`);
+  for (const e of ts.json.events) {
+    assert.match(
+      e.created_at,
+      isoRe,
+      `session_event created_at should be ISO 8601 with Z; got ${e.created_at}`,
+    );
+  }
+
+  // 3. Admin events — already covered by the since/type tests, but verify
+  //    the format invariant explicitly here too.
+  const adminEvents = await http<{ events: { created_at: string }[] }>(
+    "GET",
+    "/api/admin/events?limit=5",
+  );
+  for (const e of adminEvents.json.events) {
+    assert.match(
+      e.created_at,
+      isoRe,
+      `admin event created_at should be ISO 8601 with Z; got ${e.created_at}`,
+    );
+  }
+});
+
+test("admin audit events carry actor (x-user-id) for every event type", async () => {
+  const ACTOR = `audit-actor-${randomUUID().slice(0, 6)}`;
+  const actorHeaders = {
+    "content-type": "application/json",
+    "x-user-id": ACTOR,
+  };
+  const post = (pathname: string, body: unknown = {}) =>
+    fetch(`${base}${pathname}`, {
+      method: "POST",
+      headers: actorHeaders,
+      body: JSON.stringify(body),
+    });
+  const patch = (pathname: string, body: unknown) =>
+    fetch(`${base}${pathname}`, {
+      method: "PATCH",
+      headers: actorHeaders,
+      body: JSON.stringify(body),
+    });
+  const del = (pathname: string) =>
+    fetch(`${base}${pathname}`, { method: "DELETE", headers: actorHeaders });
+
+  // Provision a draft drill we can drive through activate → edit → deactivate
+  // → discard. Each step is a different admin event type.
+  const draftId = `fx_actor_${randomUUID().slice(0, 6)}`;
+  drills.upsert({ ...fixtures[2]!, id: draftId, is_active: false });
+
+  // Imports — round-trip a tiny YAML doc so we exercise drill_imported too.
+  const tinyDrill = {
+    ...fixtures[2]!,
+    id: `fx_actor_import_${randomUUID().slice(0, 6)}`,
+    is_active: false,
+  };
+  const YAML = (await import("yaml")).default;
+  await fetch(`${base}/api/drills/import`, {
+    method: "POST",
+    headers: { ...actorHeaders, "content-type": "application/x-yaml" },
+    body: YAML.stringify([tinyDrill]),
+  });
+
+  await post(`/api/drills/${draftId}/activate`);
+  await patch(`/api/drills/${draftId}`, {
+    rubric: {
+      must_have: ["recency vs frequency", "actor audit"],
+      nice_to_have: [],
+      red_flags: [],
+    },
+  });
+  await post(`/api/drills/${draftId}/deactivate`);
+  await del(`/api/drills/${draftId}`);
+
+  const audit = await http<{
+    events: Array<{
+      event_type: string;
+      payload: { actor?: string; drill_id?: string } | null;
+    }>;
+  }>("GET", "/api/admin/events?limit=500");
+
+  const mine = audit.json.events.filter(
+    (e) => e.payload?.actor === ACTOR,
+  );
+  const types = new Set(mine.map((e) => e.event_type));
+  for (const expected of [
+    "drill_imported",
+    "draft_activated",
+    "rubric_edited",
+    "draft_deactivated",
+    "draft_discarded",
+  ]) {
+    assert.ok(
+      types.has(expected),
+      `expected an actor-tagged ${expected} event in audit log; saw types: ${[...types].join(", ") || "(none)"}`,
+    );
+  }
+});
+
+test("DELETE /api/drills/:id writes a draft_discarded admin audit event", async () => {
+  const id = `fx_admin_discard_${randomUUID().slice(0, 8)}`;
+  drills.upsert({ ...fixtures[2]!, id, is_active: false });
+
+  const del = await fetch(`${base}/api/drills/${id}`, {
+    method: "DELETE",
+    headers,
+  });
+  assert.equal(del.status, 200);
+
+  const audit = await http<{
+    events: { event_type: string; payload: { drill_id?: string } | null }[];
+  }>(
+    "GET",
+    `/api/admin/events?type=draft_discarded&limit=500`,
+  );
+  const match = audit.json.events.find(
+    (e) => e.payload?.drill_id === id,
+  );
+  assert.ok(
+    match,
+    `expected a draft_discarded event for ${id}; saw ${audit.json.events.length} draft_discarded events total`,
+  );
+});
+
 test("GET /api/drills/export.yaml round-trips active drills (LOCAL.md §16 seed format)", async () => {
   const YAML = (await import("yaml")).default;
 

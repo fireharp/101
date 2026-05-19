@@ -1,0 +1,124 @@
+- id: db_isolation_levels_001
+  topic: database
+  subtopic: isolation
+  difficulty: 4
+  trap_type: phantom_vs_dirty_read
+  question_text: >
+    A finance app needs to count active line items and update a balance in
+    one transaction. Concurrent transactions sometimes show inconsistent
+    totals. Walk me through which isolation level you pick and why.
+  expected_answer:
+    must_have:
+      - name the anomaly (phantom or non-repeatable read)
+      - pick repeatable read or serializable
+      - mention the cost (locking / retries)
+      - read-modify-write requires either lock or serializable
+    nice_to_have:
+      - postgres uses SSI for serializable
+      - SELECT FOR UPDATE alternative
+    red_flags:
+      - "read uncommitted is faster so use it"
+      - claim higher isolation has no cost
+  rubric:
+    must_have:
+      - identify the anomaly
+      - pick correct level
+      - mention trade-off
+    nice_to_have:
+      - SSI vs S2PL note
+      - SELECT FOR UPDATE
+    red_flags:
+      - read uncommitted as default
+      - ignore retry/deadlock cost
+  canonical_short_answer: >
+    The query suffers from phantom or non-repeatable reads at READ COMMITTED.
+    Use SERIALIZABLE (Postgres SSI gives you that with optimistic retries)
+    or REPEATABLE READ plus explicit SELECT FOR UPDATE on the rows you read
+    then write. Both cost throughput; pick based on contention and the
+    business cost of a wrong total.
+  canonical_deep_answer: null
+  tags: [postgres, transactions, isolation]
+  is_active: true
+
+- id: db_long_running_tx_002
+  topic: database
+  subtopic: transactions
+  difficulty: 3
+  trap_type: open_transaction
+  question_text: >
+    Production alerts say postgres connections are climbing and autovacuum is
+    falling behind. A junior engineer left a 30-minute analytic query in a
+    BEGIN…COMMIT block. What's the chain of damage, and what do you change?
+  expected_answer:
+    must_have:
+      - long-running tx blocks vacuum
+      - dead tuples accumulate
+      - bloat + plan regression
+      - move analytics out of long transactions or use REPEATABLE READ snapshot
+    nice_to_have:
+      - statement_timeout / idle_in_transaction_session_timeout
+      - read replica for analytics
+    red_flags:
+      - "vacuum runs anyway, no harm"
+      - tune autovacuum more aggressively as the only fix
+  rubric:
+    must_have:
+      - vacuum starvation
+      - bloat consequence
+      - shorten or move tx
+    nice_to_have:
+      - timeouts
+      - replica for analytics
+    red_flags:
+      - ignore vacuum coupling
+      - throw hardware at it
+  canonical_short_answer: >
+    Long transactions hold a snapshot, so autovacuum can't reclaim dead
+    tuples newer than that snapshot. Bloat grows, plans regress, IO climbs.
+    Move analytics off the OLTP primary (read replica) or use a short
+    transaction per statement, set idle_in_transaction_session_timeout, and
+    enforce statement_timeout for ad-hoc queries.
+  canonical_deep_answer: null
+  tags: [postgres, vacuum, performance]
+  is_active: true
+
+- id: db_deadlock_001
+  topic: database
+  subtopic: deadlocks
+  difficulty: 3
+  trap_type: lock_order
+  question_text: >
+    Two workers update rows in tables A and B but in opposite order. You see
+    intermittent deadlock_detected errors. How do you fix it for good?
+  expected_answer:
+    must_have:
+      - enforce consistent lock order across paths
+      - or use single lock / advisory lock
+      - retry the loser
+      - shorten transaction scope
+    nice_to_have:
+      - postgres advisory locks
+      - skip locked for queue patterns
+    red_flags:
+      - "increase deadlock_timeout"
+      - "just retry forever"
+  rubric:
+    must_have:
+      - consistent lock order
+      - retry safe
+      - keep tx short
+    nice_to_have:
+      - advisory locks
+      - skip locked
+    red_flags:
+      - lengthen timeout as fix
+      - ignore semantic ordering
+  canonical_short_answer: >
+    Deadlocks happen when transactions grab the same resources in different
+    orders. Enforce one canonical order (always lock A then B), keep
+    transactions short, and treat the deadlock_detected error as a retry
+    signal in the application. Increasing deadlock_timeout only hides the
+    problem.
+  canonical_deep_answer: null
+  tags: [postgres, locks, transactions]
+  is_active: true

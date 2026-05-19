@@ -1,0 +1,125 @@
+- id: dist_load_balancer_health_001
+  topic: distributed
+  subtopic: load_balancing
+  difficulty: 3
+  trap_type: half_open_health
+  question_text: >
+    Your load balancer keeps routing traffic to a node that responds 200 OK
+    on /health but is actually serving 500s for real traffic. What's broken
+    and how do you design a better health check?
+  expected_answer:
+    must_have:
+      - shallow health checks miss real failures
+      - "deep / synthetic check exercising dependencies"
+      - separate liveness vs readiness
+      - LB takes node out on readiness fail
+    nice_to_have:
+      - circuit breaker on outbound deps
+      - graceful drain on deploy
+    red_flags:
+      - "/health returning literal OK is enough"
+      - one binary signal
+  rubric:
+    must_have:
+      - shallow vs deep
+      - readiness probe
+      - check real path
+    nice_to_have:
+      - drain on deploy
+      - circuit breaker
+    red_flags:
+      - static 200 OK
+      - never remove sick nodes
+  canonical_short_answer: >
+    /health returning 200 only proves the process is up. Add a readiness
+    probe that hits a representative path (e.g. a real DB query) and let the
+    LB drop nodes that fail it. Keep liveness separate so a flaky dependency
+    doesn't kill-and-restart the whole fleet. Graceful drain on deploy
+    closes the loop.
+  canonical_deep_answer: null
+  tags: [load_balancing, k8s, reliability]
+  is_active: true
+
+- id: dist_service_discovery_001
+  topic: distributed
+  subtopic: service_discovery
+  difficulty: 3
+  trap_type: stale_endpoints
+  question_text: >
+    Service A talks to service B via a hard-coded list of IPs. Deploys of B
+    cause 5-10 minutes of errors for A. What do you change and what are the
+    tradeoffs?
+  expected_answer:
+    must_have:
+      - service discovery (DNS, registry, service mesh)
+      - dynamic endpoint refresh
+      - health-aware routing
+      - TTL / push update tradeoff
+    nice_to_have:
+      - virtual IP / k8s Service abstraction
+      - client-side LB cache
+    red_flags:
+      - "just keep updating the hard-coded list"
+      - blanket restart of A on every B deploy
+  rubric:
+    must_have:
+      - dynamic discovery
+      - health-aware
+      - push vs pull update
+    nice_to_have:
+      - service mesh
+      - cached resolver
+    red_flags:
+      - static config forever
+      - DNS at 24h TTL
+  canonical_short_answer: >
+    Replace the hard-coded list with service discovery: DNS with short TTL,
+    a registry like Consul, or a service mesh sidecar. New B instances
+    register on startup and unhealthy ones get removed; A's client gets
+    fresh endpoints within seconds, not minutes. Trade pull-DNS simplicity
+    against push-update freshness.
+  canonical_deep_answer: null
+  tags: [service_discovery, k8s, mesh]
+  is_active: true
+
+- id: dist_blue_green_001
+  topic: distributed
+  subtopic: deploys
+  difficulty: 3
+  trap_type: in_place_deploy
+  question_text: >
+    Your team currently does rolling deploys but rollbacks are painful and
+    bad releases affect users for 10+ minutes. Compare blue/green and
+    canary deploys and recommend one.
+  expected_answer:
+    must_have:
+      - blue/green = duplicate environment, swap traffic
+      - canary = small slice of traffic to new version
+      - blue/green = fast rollback, double cost
+      - canary = early detection, gradual rollout
+    nice_to_have:
+      - feature flags as orthogonal mechanism
+      - migrations decoupled from deploys
+    red_flags:
+      - "rolling deploy is always fine"
+      - both strategies are identical
+  rubric:
+    must_have:
+      - define both
+      - rollback story
+      - cost vs safety tradeoff
+    nice_to_have:
+      - feature flags
+      - migration timing
+    red_flags:
+      - confuse the two
+      - claim no downside
+  canonical_short_answer: >
+    Blue/green runs two full environments and swaps traffic atomically —
+    instant rollback, but you pay for two stacks. Canary routes a small
+    slice (1-5%) of traffic to the new version, catches regressions on real
+    users early, and ramps up. For high-risk releases, canary first then
+    full rollout. Use feature flags to decouple deploy from feature exposure.
+  canonical_deep_answer: null
+  tags: [deploys, ci_cd, reliability]
+  is_active: true

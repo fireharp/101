@@ -163,10 +163,14 @@ Verdict: `>= 0.80 pass`, `0.60–0.79 borderline`, `< 0.60 fail`.
 | `POST` | `/api/cards/:id/review` | record SM-2-lite review (`quality` 0/1) |
 | `GET`  | `/api/cards/export.csv` | Anki-importable CSV (`front,back,tags`) |
 | `GET`  | `/api/progress` | per-topic weakness state |
-| `GET`  | `/api/drills` | drill bank browse |
+| `GET`  | `/api/drills` | drill bank browse (active only) |
+| `GET`  | `/api/drills/drafts` | Layer-3 LLM drafts (is_active=false) |
+| `POST` | `/api/drills/:id/activate` | promote a draft into the rotation pool |
+| `POST` | `/api/drills/:id/test-grade` | dry-run grader against a sample answer (no persist) |
+| `DELETE` | `/api/drills/:id` | delete a draft (active drills are protected) |
 | `POST` | `/api/realtime/tool-call` | dispatch for the voice agent's tool calls |
 | `GET`  | `/api/drill-sessions/:id/summary` | per-session stats (attempts, scores, topics) |
-| `POST` | `/api/drill-sessions/:id/end` | mark ended + redirect to summary |
+| `POST` | `/api/drill-sessions/:id/end` | mark ended + return summary |
 
 ## Seed drills
 
@@ -201,6 +205,18 @@ pnpm --filter @drill/backend gen:drills -- \
 Inserts drills as `is_active=false` drafts so the rotation engine never
 serves them until a human flips the bit. Tagged with `gen:llm` for filtering.
 Uses `OPENAI_GRADING_MODEL` (default `gpt-4.1-mini`).
+
+Review and activate drafts from the UI: click **Show drafts** in the header
+to see every `is_active=false` drill with rubric preview, then **Activate**
+to promote into the rotation pool or **Discard** to delete.
+
+### Admin: dry-run grader (LOCAL.md §13)
+
+In the drill browse panel, expand any drill and the rubric panel now
+includes a **Test grade** widget — paste a sample answer, click *Run
+grader*, and see the rubric verdict (score, missed points) without
+recording an attempt. Useful for tuning rubrics or sanity-checking newly
+activated drafts.
 
 ## What is *not* in the MVP
 
@@ -254,7 +270,7 @@ Three layers, fastest to slowest:
 
 | Layer | Command | What it proves |
 | --- | --- | --- |
-| Unit tests | `pnpm -r test` | rotation engine selection rules, offline grader scoring, red-flag penalty, card generation. No network. |
+| Unit + route tests | `pnpm -r test` | rotation engine, offline grader, AND HTTP routes (session ownership, draft activation, dry-run grader, tool-call dispatch). 19 tests. Runs Express in-process on an ephemeral port, no network. |
 | REST drill loop | `pnpm smoke:drill-loop` | end-to-end loop over HTTP for N drills with the offline grader — verifies rotation produces variety, weakness state moves, mixed verdicts. Boots its own backend on an isolated DB. |
 | Browser drill loop | `pnpm smoke:browser` | exercises App.tsx in Chromium (no mic): Start → type answer → Submit → grade panel renders → Next drill → question changes. |
 | Realtime WebRTC | `pnpm smoke:realtime` | full voice path: launches Chromium with `--use-file-for-fake-audio-capture` against a Mumbli WAV, asserts the model connects and ASR transcript appears. Requires `OPENAI_API_KEY`. |

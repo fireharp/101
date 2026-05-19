@@ -194,6 +194,60 @@ export const api = {
       method: "POST",
     }),
 
+  drafts: () =>
+    jsonFetch<{
+      count: number;
+      drills: {
+        id: string;
+        topic: string;
+        subtopic: string;
+        difficulty: number;
+        trap_type: string | null;
+        question_text: string;
+        canonical_short_answer: string;
+        rubric: {
+          must_have: string[];
+          nice_to_have: string[];
+          red_flags: string[];
+        };
+        tags: string[];
+      }[];
+    }>("/api/drills/drafts"),
+
+  activateDrill: (id: string) =>
+    jsonFetch<{ ok: boolean }>(`/api/drills/${id}/activate`, {
+      method: "POST",
+      body: "{}",
+    }),
+
+  deleteDrill: (id: string) =>
+    jsonFetch<{ ok: boolean }>(`/api/drills/${id}`, {
+      method: "DELETE",
+    }),
+
+  testGrade: (id: string, transcript: string, durationSeconds = 45) =>
+    jsonFetch<{
+      drill_id: string;
+      score: number;
+      verdict: "pass" | "borderline" | "fail";
+      missed_points: string[];
+      ideal_short_answer: string;
+      breakdown: {
+        must_have_coverage: number;
+        answer_clarity: number;
+        tradeoff_coverage: number;
+        speed_score: number;
+        red_flag_penalty: number;
+      };
+      cards: { front: string; back: string }[];
+    }>(`/api/drills/${id}/test-grade`, {
+      method: "POST",
+      body: JSON.stringify({
+        transcript,
+        duration_seconds: durationSeconds,
+      }),
+    }),
+
   drills: (topic?: string) =>
     jsonFetch<{
       count: number;

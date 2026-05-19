@@ -1,0 +1,79 @@
+- id: obs_tracing_propagation_001
+  topic: observability
+  subtopic: tracing
+  difficulty: 3
+  trap_type: missing_context
+  question_text: >
+    Traces from your distributed system stop at the first async hop and you
+    can't see the downstream span. What's likely broken and how do you fix it?
+  expected_answer:
+    must_have:
+      - trace context not propagated across the async boundary
+      - inject and extract W3C traceparent
+      - background jobs / queues need explicit propagation
+      - same trace id, child span on the consumer
+    nice_to_have:
+      - baggage for cross-service attributes
+      - sampling decisions propagate too
+    red_flags:
+      - "tracing should just work automatically"
+      - new trace id per service
+  rubric:
+    must_have:
+      - context propagation
+      - W3C traceparent / B3
+      - async boundary fix
+    nice_to_have:
+      - baggage
+      - consistent sampling
+    red_flags:
+      - new trace per hop
+      - rely on logs alone
+  canonical_short_answer: >
+    The async hop drops the trace context. Serialize the W3C traceparent (or
+    B3) header into the message envelope on the producer, extract it on the
+    consumer, and start a child span linked to the same trace id. The same
+    pattern fixes background jobs, queues, and cross-process boundaries.
+  canonical_deep_answer: null
+  tags: [tracing, opentelemetry, observability]
+  is_active: true
+
+- id: obs_structured_logging_001
+  topic: observability
+  subtopic: logging
+  difficulty: 2
+  trap_type: free_text_logs
+  question_text: >
+    Your team logs everything as printf strings. On-call wants to filter for
+    "errors from user X in the last hour". What's wrong and what do you change?
+  expected_answer:
+    must_have:
+      - structured logging (JSON or key-value)
+      - request id / user id as fields
+      - searchable in log store
+      - severity as a field, not parsed from text
+    nice_to_have:
+      - log sampling for high-volume routes
+      - correlate with traces via trace id
+    red_flags:
+      - "grep is good enough"
+      - log everything at INFO
+  rubric:
+    must_have:
+      - structured fields
+      - searchable identifiers
+      - severity as field
+    nice_to_have:
+      - sampling
+      - trace correlation
+    red_flags:
+      - free text
+      - one severity level
+  canonical_short_answer: >
+    printf logs aren't searchable by attribute. Emit JSON with request_id,
+    user_id, severity, and trace_id as fields. The log store can then index
+    them and on-call can filter by user_id without regex gymnastics. Bonus:
+    correlate with traces via trace_id.
+  canonical_deep_answer: null
+  tags: [logging, observability]
+  is_active: true

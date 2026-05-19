@@ -111,6 +111,33 @@ export const drills = {
     };
     return row.c;
   },
+
+  setActive(id: string, active: boolean): boolean {
+    const info = db
+      .prepare("UPDATE drill_items SET is_active = ? WHERE id = ?")
+      .run(active ? 1 : 0, id);
+    return info.changes > 0;
+  },
+
+  remove(id: string, onlyIfInactive = true): boolean {
+    if (onlyIfInactive) {
+      const info = db
+        .prepare("DELETE FROM drill_items WHERE id = ? AND is_active = 0")
+        .run(id);
+      return info.changes > 0;
+    }
+    const info = db.prepare("DELETE FROM drill_items WHERE id = ?").run(id);
+    return info.changes > 0;
+  },
+
+  listDrafts(): DrillItem[] {
+    const rows = db
+      .prepare(
+        "SELECT * FROM drill_items WHERE is_active = 0 ORDER BY created_at DESC",
+      )
+      .all() as DrillItemRow[];
+    return rows.map(rowToDrillItem);
+  },
 };
 
 export interface SessionRow {

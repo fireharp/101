@@ -1,0 +1,82 @@
+- id: perf_n_plus_one_001
+  topic: performance
+  subtopic: query_count
+  difficulty: 2
+  trap_type: orm_default
+  question_text: >
+    An endpoint that lists 50 orders with their customer makes 51 queries to
+    the DB. It's fast locally but slow in prod. What's happening and how do
+    you fix it?
+  expected_answer:
+    must_have:
+      - N+1 query problem
+      - one query for orders, one per customer
+      - JOIN or eager-load
+      - latency adds per query in prod
+    nice_to_have:
+      - dataloader / batch
+      - explain ORM lazy default
+    red_flags:
+      - "add a cache and move on"
+      - "vertical scale the DB"
+  rubric:
+    must_have:
+      - identify N+1
+      - fix via join / eager / batch
+      - per-query latency
+    nice_to_have:
+      - DataLoader pattern
+      - ORM defaults
+    red_flags:
+      - cache as fix
+      - ignore architecture
+  canonical_short_answer: >
+    Classic N+1: the ORM loads orders, then issues one query per order to
+    fetch its customer. Locally the DB is on localhost so 51 queries feels
+    fine; in prod each round-trip costs ms. Fix with a JOIN, eager loading,
+    or DataLoader-style batching. Profile the real-world latency, don't trust
+    "feels fast" on localhost.
+  canonical_deep_answer: null
+  tags: [orm, performance, latency]
+  is_active: true
+
+- id: perf_memory_leak_001
+  topic: performance
+  subtopic: memory
+  difficulty: 4
+  trap_type: cache_unbounded
+  question_text: >
+    A Node service slowly grows from 200MB to 4GB RSS over a week, then OOMs.
+    How would you investigate?
+  expected_answer:
+    must_have:
+      - take heap snapshots over time
+      - diff snapshots to find growing retainers
+      - look for unbounded caches / event listeners / closures
+      - reproduce with load if possible
+    nice_to_have:
+      - use --inspect or clinic.js
+      - watch for known leak patterns (cache without eviction)
+    red_flags:
+      - "restart it daily and move on"
+      - blame Node's GC without evidence
+  rubric:
+    must_have:
+      - heap snapshots
+      - diff retainers
+      - candidate leak sources
+    nice_to_have:
+      - tooling named
+      - cache eviction policy
+    red_flags:
+      - restart cron as fix
+      - blame runtime
+  canonical_short_answer: >
+    Take heap snapshots at intervals, diff them to find which retainer set is
+    growing. Most leaks in Node services are unbounded Map/object caches,
+    forgotten event listeners, or closures that capture large objects. Fix
+    the actual retainer (e.g. switch to an LRU cache with a bound). A
+    nightly restart is a workaround, not a fix.
+  canonical_deep_answer: null
+  tags: [node, memory, performance]
+  is_active: true

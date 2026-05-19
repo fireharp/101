@@ -1,0 +1,81 @@
+- id: test_pyramid_001
+  topic: testing
+  subtopic: strategy
+  difficulty: 2
+  trap_type: e2e_heavy
+  question_text: >
+    A team has 2000 end-to-end Selenium tests and almost no unit tests. CI
+    takes 90 minutes and is constantly flaky. How do you fix this?
+  expected_answer:
+    must_have:
+      - invert the test pyramid (more unit, fewer E2E)
+      - unit tests fast and deterministic
+      - integration tests cover the seams
+      - keep a small number of E2E for happy paths
+    nice_to_have:
+      - contract tests at service boundaries
+      - quarantine flaky tests
+    red_flags:
+      - "more E2E for more coverage"
+      - delete failing tests without investigation
+  rubric:
+    must_have:
+      - test pyramid inversion
+      - unit speed/determinism
+      - integration for seams
+    nice_to_have:
+      - contract tests
+      - quarantine flakes
+    red_flags:
+      - all E2E is fine
+      - flaky test deletion
+  canonical_short_answer: >
+    Invert the pyramid. Most tests should be unit (fast, deterministic),
+    fewer integration tests cover the seams (DB, HTTP clients), and a small
+    number of E2E cover the happy paths. The Selenium suite is a smell —
+    keep maybe 50 of them, push the rest down. Quarantine flaky tests and
+    fix root causes; don't just delete them.
+  canonical_deep_answer: null
+  tags: [testing, ci]
+  is_active: true
+
+- id: test_flaky_tests_001
+  topic: testing
+  subtopic: flakiness
+  difficulty: 3
+  trap_type: time_based
+  question_text: >
+    A test passes locally but fails 5% of the time in CI. The team is talking
+    about adding a retry. Walk me through how you'd actually diagnose this.
+  expected_answer:
+    must_have:
+      - reproduce locally with parallelism / load
+      - identify the source (time, order, network, env)
+      - fix the root cause, don't retry
+      - log enough to make it diagnosable on next failure
+    nice_to_have:
+      - test isolation (DB transactions, fixtures)
+      - clock injection / freeze
+    red_flags:
+      - retry without root-cause
+      - "delete the test"
+  rubric:
+    must_have:
+      - reproduce / isolate cause
+      - fix root cause
+      - improve observability of test
+    nice_to_have:
+      - inject time
+      - reset shared state
+    red_flags:
+      - blanket retry
+      - ignore the 5%
+  canonical_short_answer: >
+    Don't retry — diagnose. Reproduce under CI-like parallelism and load.
+    The cause is usually one of four: test order dependency, real-clock
+    assertions, shared mutable state, or network jitter. Inject the clock,
+    isolate state per test, log enough context, and fix it. Retries paper
+    over real bugs that will surface in production later.
+  canonical_deep_answer: null
+  tags: [testing, ci, flaky]
+  is_active: true

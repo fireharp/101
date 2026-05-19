@@ -71,6 +71,28 @@ export function App() {
   const [expandedDrill, setExpandedDrill] = useState<string | null>(null);
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [ending, setEnding] = useState(false);
+  const [drillCount, setDrillCount] = useState(0);
+  const MOCK_TARGET = 7;
+  const [drafts, setDrafts] = useState<
+    | {
+        id: string;
+        topic: string;
+        subtopic: string;
+        difficulty: number;
+        trap_type: string | null;
+        question_text: string;
+        canonical_short_answer: string;
+        rubric: { must_have: string[]; nice_to_have: string[]; red_flags: string[] };
+      }[]
+    | null
+  >(null);
+  const [draftsOpen, setDraftsOpen] = useState(false);
+  const [testTranscript, setTestTranscript] = useState<Record<string, string>>(
+    {},
+  );
+  const [testResult, setTestResult] = useState<
+    Record<string, { score: number; verdict: string; missed: number } | null>
+  >({});
 
   const startedAtRef = useRef<number | null>(null);
   const tickRef = useRef<number | null>(null);
@@ -199,11 +221,13 @@ export function App() {
     setError(null);
     setGrade(null);
     setTranscript("");
+    setDrillCount(0);
     try {
       const s = await api.startSession(mode);
       setSession(s);
       const d = await api.nextDrill(s.id, mode);
       setDrill(d);
+      setDrillCount(1);
       startTimer();
     } catch (e) {
       setError((e as Error).message);
@@ -218,6 +242,7 @@ export function App() {
     try {
       const d = await api.nextDrill(session.id, mode);
       setDrill(d);
+      setDrillCount((c) => c + 1);
       startTimer();
     } catch (e) {
       setError((e as Error).message);
@@ -254,7 +279,7 @@ export function App() {
         api.progress(),
         api.cardsDue(30),
       ]);
-      setProgress(prog.skills.slice(0, 5));
+      setProgress(prog.skills);
       setDueCards(due.cards);
       setCardStats(due.stats);
     } catch (e) {
@@ -290,7 +315,74 @@ export function App() {
     setDrill(null);
     setGrade(null);
     setTranscript("");
+    setDrillCount(0);
   }, [stopTimer]);
+
+  const refreshDrafts = useCallback(async () => {
+    try {
+      const r = await api.drafts();
+      setDrafts(r.drills);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, []);
+
+  const onToggleDrafts = useCallback(async () => {
+    setDraftsOpen((v) => !v);
+    if (!drafts) {
+      void refreshDrafts();
+    }
+  }, [drafts, refreshDrafts]);
+
+  const onActivateDraft = useCallback(
+    async (id: string) => {
+      try {
+        await api.activateDrill(id);
+        // Refresh both drafts and the active browse list.
+        await refreshDrafts();
+        if (drillBrowse) {
+          const r = await api.drills();
+          setDrillBrowse(r.drills);
+        }
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [drillBrowse, refreshDrafts],
+  );
+
+  const onDiscardDraft = useCallback(
+    async (id: string) => {
+      try {
+        await api.deleteDrill(id);
+        await refreshDrafts();
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [refreshDrafts],
+  );
+
+  const onTestGrade = useCallback(
+    async (id: string) => {
+      const text = (testTranscript[id] ?? "").trim();
+      if (!text) return;
+      try {
+        const r = await api.testGrade(id, text);
+        setTestResult((prev) => ({
+          ...prev,
+          [id]: {
+            score: r.score,
+            verdict: r.verdict,
+            missed: r.missed_points.length,
+          },
+        }));
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [testTranscript],
+  );
 
   const onOpenDrillBrowse = useCallback(async () => {
     setDrillBrowseOpen((v) => !v);
@@ -355,6 +447,15 @@ export function App() {
           >
             {drillBrowseOpen ? "Hide" : "Browse"} drills
           </button>
+          <button
+            data-testid="toggle-drafts"
+            onClick={onToggleDrafts}
+            style={{ padding: "0.35rem 0.6rem", fontSize: "0.85rem" }}
+            title="Layer-3 generator drafts (is_active=false)"
+          >
+            {draftsOpen ? "Hide" : "Show"} drafts
+            {drafts && drafts.length > 0 ? ` (${drafts.length})` : ""}
+          </button>
         </div>
       </header>
 
@@ -364,20 +465,82 @@ export function App() {
           data-testid="progress-strip"
           style={{ gridColumn: "1 / -1", padding: "0.6rem 1rem" }}
         >
-          <div className="row" style={{ alignItems: "center" }}>
+          <div className="row" style={{ alignItems: "center", marginBottom: "0.4rem" }}>
             <strong style={{ fontSize: "0.85rem", letterSpacing: "0.02em" }}>
-              Weakest
+              Skill weakness by subtopic
             </strong>
-            {progress.slice(0, 3).map((s) => (
-              <span
-                key={`${s.topic}:${s.subtopic}`}
-                className="tag"
-                title={`exposure ${s.exposure_count}`}
-              >
-                {s.topic} · {s.subtopic} ·{" "}
-                {(s.weakness_score * 100).toFixed(0)}%
-              </span>
-            ))}
+            <span className="muted" style={{ fontSize: "0.75rem" }}>
+              ({progress.length} touched)
+            </span>
+            <span className="muted" style={{ marginLeft: "auto", fontSize: "0.72rem" }}>
+              0% = mastered · 100% = always fails
+            </span>
+          </div>
+          <div data-testid="skill-graph" style={{ display: "grid", gap: "0.25rem" }}>
+            {progress
+              .slice()
+              .sort((a, b) => b.weakness_score - a.weakness_score)
+              .map((s) => {
+                const pct = Math.round(s.weakness_score * 100);
+                const color =
+                  s.weakness_score >= 0.7
+                    ? "var(--bad)"
+                    : s.weakness_score >= 0.4
+                      ? "var(--warn)"
+                      : "var(--good)";
+                return (
+                  <div
+                    key={`${s.topic}:${s.subtopic}`}
+                    className="row"
+                    style={{ alignItems: "center", gap: "0.5rem" }}
+                  >
+                    <span
+                      style={{
+                        flex: "0 0 180px",
+                        fontSize: "0.78rem",
+                        color: "var(--muted)",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                      }}
+                      title={`${s.topic} · ${s.subtopic} · exposure ${s.exposure_count}`}
+                    >
+                      {s.topic} · {s.subtopic}
+                    </span>
+                    <div
+                      style={{
+                        flex: 1,
+                        background: "#0a0c12",
+                        border: "1px solid var(--border)",
+                        borderRadius: 4,
+                        height: 14,
+                        position: "relative",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${pct}%`,
+                          height: "100%",
+                          background: color,
+                          transition: "width 200ms ease",
+                        }}
+                      />
+                    </div>
+                    <span
+                      style={{
+                        flex: "0 0 48px",
+                        textAlign: "right",
+                        fontSize: "0.75rem",
+                        fontVariantNumeric: "tabular-nums",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      {pct}%
+                    </span>
+                  </div>
+                );
+              })}
           </div>
         </div>
       )}
@@ -415,6 +578,23 @@ export function App() {
               <span className="tag">{drill.topic}</span>
               <span className="tag">{drill.subtopic}</span>
               <span className="tag">difficulty {drill.difficulty}</span>
+              {session?.mode === "mock_interview" && (
+                <span
+                  className="tag"
+                  data-testid="mock-progress"
+                  style={{
+                    background:
+                      drillCount > MOCK_TARGET
+                        ? "var(--warn)"
+                        : "transparent",
+                    color:
+                      drillCount > MOCK_TARGET ? "#0c1220" : "inherit",
+                  }}
+                >
+                  Drill {drillCount} of {MOCK_TARGET}
+                  {drillCount >= MOCK_TARGET ? " — end soon" : ""}
+                </span>
+              )}
               <span className="timer">⏱ {formatTime(elapsed)}</span>
             </div>
             <div data-testid="question" className="question">
@@ -638,6 +818,89 @@ export function App() {
         </section>
       )}
 
+      {draftsOpen && drafts && (
+        <section
+          className="panel"
+          data-testid="drafts"
+          style={{ gridColumn: "1 / -1" }}
+        >
+          <div className="row" style={{ marginBottom: "0.4rem" }}>
+            <h2 style={{ margin: 0 }}>
+              Layer-3 drafts{" "}
+              <span
+                className="muted"
+                style={{ fontWeight: 400, fontSize: "0.85rem" }}
+              >
+                ({drafts.length})
+              </span>
+            </h2>
+            <span className="muted" style={{ marginLeft: "auto", fontSize: "0.8rem" }}>
+              LLM-generated drills, inactive until you activate.
+            </span>
+          </div>
+          {drafts.length === 0 ? (
+            <p className="muted">
+              No drafts. Run{" "}
+              <code>pnpm --filter @drill/backend gen:drills -- --topic X --count N</code>{" "}
+              to produce some.
+            </p>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gap: "0.5rem",
+                gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+              }}
+            >
+              {drafts.map((d) => (
+                <div className="card" key={d.id} data-testid="draft-card">
+                  <div
+                    className="row"
+                    style={{ alignItems: "center", marginBottom: "0.25rem" }}
+                  >
+                    <span className="tag">{d.topic}</span>
+                    <span className="tag">{d.subtopic}</span>
+                    <span className="tag">d{d.difficulty}</span>
+                  </div>
+                  <div style={{ fontSize: "0.85rem", marginBottom: "0.4rem" }}>
+                    {d.question_text.trim()}
+                  </div>
+                  <div
+                    className="muted"
+                    style={{ fontSize: "0.75rem", marginBottom: "0.4rem" }}
+                  >
+                    <strong>must:</strong>{" "}
+                    {d.rubric.must_have.join(" · ")}
+                    {d.rubric.red_flags.length > 0 && (
+                      <>
+                        <br />
+                        <strong>red flags:</strong>{" "}
+                        {d.rubric.red_flags.join(" · ")}
+                      </>
+                    )}
+                  </div>
+                  <div className="row" style={{ gap: "0.4rem" }}>
+                    <button
+                      data-testid="activate-draft"
+                      className="primary"
+                      onClick={() => onActivateDraft(d.id)}
+                    >
+                      Activate
+                    </button>
+                    <button
+                      data-testid="discard-draft"
+                      onClick={() => onDiscardDraft(d.id)}
+                    >
+                      Discard
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       {drillBrowseOpen && drillBrowse && (
         <section
           className="panel"
@@ -727,6 +990,62 @@ export function App() {
                       {d.rubric.red_flags.join(" · ") || "—"}
                       <br />
                       <strong>ideal:</strong> {d.canonical_short_answer}
+                      <div
+                        style={{
+                          marginTop: "0.5rem",
+                          borderTop: "1px solid var(--border)",
+                          paddingTop: "0.4rem",
+                          color: "var(--text)",
+                        }}
+                      >
+                        <strong style={{ fontSize: "0.8rem" }}>
+                          Test grade (no persist)
+                        </strong>
+                        <textarea
+                          data-testid="test-grade-input"
+                          placeholder="Paste a sample answer to dry-run the grader against this rubric."
+                          value={testTranscript[d.id] ?? ""}
+                          onChange={(e) =>
+                            setTestTranscript((prev) => ({
+                              ...prev,
+                              [d.id]: e.target.value,
+                            }))
+                          }
+                          rows={3}
+                          style={{
+                            width: "100%",
+                            marginTop: "0.3rem",
+                            fontFamily: "inherit",
+                            fontSize: "0.8rem",
+                            color: "inherit",
+                            background: "#0a0c12",
+                            border: "1px solid var(--border)",
+                            borderRadius: 6,
+                            padding: "0.4rem 0.5rem",
+                          }}
+                        />
+                        <div
+                          className="row"
+                          style={{ marginTop: "0.3rem", gap: "0.4rem" }}
+                        >
+                          <button
+                            data-testid="test-grade-run"
+                            onClick={() => onTestGrade(d.id)}
+                            style={{ fontSize: "0.78rem", padding: "0.25rem 0.5rem" }}
+                          >
+                            Run grader
+                          </button>
+                          {testResult[d.id] && (
+                            <span
+                              className={`tag verdict-${testResult[d.id]!.verdict}`}
+                            >
+                              {Math.round(testResult[d.id]!.score * 100)} ·{" "}
+                              {testResult[d.id]!.verdict} · {testResult[d.id]!.missed}{" "}
+                              missed
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>

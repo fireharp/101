@@ -89,24 +89,43 @@ async function main() {
     // Give the agent a moment to fire tool calls after the user audio
     // ends — these typically arrive in the seconds after
     // `input_audio_buffer.speech_stopped`.
-    const toolWaitMs = Number(process.env.REALTIME_SMOKE_TOOL_WAIT_MS ?? 20000);
+    //
+    // Two assertion levels:
+    //   REALTIME_SMOKE_REQUIRE_TOOL=1 (default)  → at least 1 tool call
+    //   REALTIME_SMOKE_REQUIRE_MULTI_TURN=1      → at least 2 distinct
+    //     tool names (proves the actual drill loop: ask → grade → next)
+    const requireMultiTurn =
+      process.env.REALTIME_SMOKE_REQUIRE_MULTI_TURN === "1";
+    const defaultWait = requireMultiTurn ? 90000 : 20000;
+    const toolWaitMs = Number(
+      process.env.REALTIME_SMOKE_TOOL_WAIT_MS ?? defaultWait,
+    );
     const requireToolCall = process.env.REALTIME_SMOKE_REQUIRE_TOOL !== "0";
     const toolWaitErr = await page
       .waitForFunction(
-        () => {
+        (multi) => {
           const events = window.__drillRealtimeDebug?.events ?? [];
-          return events.some((e) => e.type === "tool_call.handled");
+          const handled = events.filter((e) => e.type === "tool_call.handled");
+          if (!multi) return handled.length >= 1;
+          const distinct = new Set(
+            handled.map((e) => e.state).filter(Boolean),
+          );
+          return distinct.size >= 2;
         },
-        undefined,
+        requireMultiTurn,
         { timeout: toolWaitMs },
       )
       .then(() => null)
       .catch((err) => err);
     if (requireToolCall && toolWaitErr) {
       throw new Error(
-        "Agent never called a backend tool within " +
-          toolWaitMs +
-          "ms; set REALTIME_SMOKE_REQUIRE_TOOL=0 to skip this assertion",
+        requireMultiTurn
+          ? "Agent never produced 2 distinct tool calls within " +
+            toolWaitMs +
+            "ms (no multi-turn drill loop). Set REALTIME_SMOKE_REQUIRE_MULTI_TURN=0 to relax."
+          : "Agent never called a backend tool within " +
+            toolWaitMs +
+            "ms; set REALTIME_SMOKE_REQUIRE_TOOL=0 to skip this assertion",
       );
     }
 

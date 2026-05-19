@@ -418,6 +418,86 @@ apiRouter.get("/drills", (req: Request, res: Response) => {
 });
 
 /* ------------------------------------------------------------------ */
+/* GET /api/drills/drafts                                             */
+/* Lists is_active=false drills (Layer-3 LLM drafts).                 */
+/* ------------------------------------------------------------------ */
+apiRouter.get("/drills/drafts", (_req: Request, res: Response) => {
+  const items = drills.listDrafts();
+  res.json({ count: items.length, drills: items });
+});
+
+/* ------------------------------------------------------------------ */
+/* POST /api/drills/:id/activate                                      */
+/* Promotes a draft into the rotation pool.                           */
+/* ------------------------------------------------------------------ */
+apiRouter.post("/drills/:id/activate", (req: Request, res: Response) => {
+  const id = String(req.params.id ?? "");
+  if (!id) return res.status(400).json({ error: "missing id" });
+  const ok = drills.setActive(id, true);
+  if (!ok) return res.status(404).json({ error: "drill not found" });
+  const drill = drills.get(id);
+  res.json({ ok: true, drill });
+});
+
+/* ------------------------------------------------------------------ */
+/* DELETE /api/drills/:id                                             */
+/* Only allowed on inactive drafts to prevent destroying live data.   */
+/* ------------------------------------------------------------------ */
+apiRouter.delete("/drills/:id", (req: Request, res: Response) => {
+  const id = String(req.params.id ?? "");
+  if (!id) return res.status(400).json({ error: "missing id" });
+  const existing = drills.get(id);
+  if (!existing) return res.status(404).json({ error: "drill not found" });
+  if (existing.is_active) {
+    return res.status(409).json({
+      error: "drill is active — only inactive drafts can be deleted",
+    });
+  }
+  const ok = drills.remove(id, true);
+  res.json({ ok });
+});
+
+/* ------------------------------------------------------------------ */
+/* POST /api/drills/:id/test-grade                                    */
+/* Runs the grading engine against a sample transcript WITHOUT        */
+/* persisting an attempt or updating skill state. For rubric tuning   */
+/* (LOCAL.md §13 admin screen).                                       */
+/* ------------------------------------------------------------------ */
+const testGradeSchema = z.object({
+  transcript: z.string().min(1),
+  duration_seconds: z.number().int().min(0).max(1800).optional().default(45),
+});
+
+apiRouter.post(
+  "/drills/:id/test-grade",
+  async (req: Request, res: Response) => {
+    const id = String(req.params.id ?? "");
+    if (!id) return res.status(400).json({ error: "missing id" });
+    const drill = drills.get(id);
+    if (!drill) return res.status(404).json({ error: "drill not found" });
+    const parsed = testGradeSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.message });
+    }
+    const grade = await gradeAttempt({
+      drill,
+      transcript: parsed.data.transcript,
+      duration_seconds: parsed.data.duration_seconds,
+    });
+    // Do NOT persist anything — this is a dry-run for rubric tuning.
+    res.json({
+      drill_id: drill.id,
+      score: grade.score,
+      verdict: grade.verdict,
+      missed_points: grade.missed_points,
+      ideal_short_answer: grade.ideal_short_answer,
+      breakdown: grade.breakdown,
+      cards: grade.cards.map((c) => ({ front: c.front, back: c.back })),
+    });
+  },
+);
+
+/* ------------------------------------------------------------------ */
 /* POST /api/realtime/tool-call                                       */
 /* Single dispatch endpoint for the Realtime voice agent.             */
 /* The frontend forwards function_call_arguments.done events here,    */

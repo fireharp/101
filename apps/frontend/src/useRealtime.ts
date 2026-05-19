@@ -25,11 +25,12 @@ type Status =
 export interface RealtimeHandle {
   status: Status;
   error: string | null;
-  start: () => Promise<void>;
+  start: (initialDrill?: string) => Promise<void>;
   stop: () => Promise<void>;
   transcript: string;
   audioEl: React.RefObject<HTMLAudioElement | null>;
   send: (event: Record<string, unknown>) => void;
+  pushDrill: (question: string) => void;
 }
 
 export function useRealtime(): RealtimeHandle {
@@ -72,7 +73,36 @@ export function useRealtime(): RealtimeHandle {
     setStatus("idle");
   }, []);
 
-  const start = useCallback(async () => {
+  const pushDrill = useCallback(
+    (question: string) => {
+      if (!question) return;
+      send({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text:
+                "Current drill (ask the user aloud, exactly once, then wait for their answer):\n" +
+                question.trim(),
+            },
+          ],
+        },
+      });
+      send({
+        type: "response.create",
+        response: {
+          instructions:
+            "Ask the current drill question above in one breath, then stop and wait for the user's answer. Do not give hints.",
+        },
+      });
+    },
+    [send],
+  );
+
+  const start = useCallback(async (initialDrill?: string) => {
     setError(null);
     setTranscript("");
     setStatus("connecting");
@@ -106,14 +136,17 @@ export function useRealtime(): RealtimeHandle {
 
       dc.onopen = () => {
         setStatus("connected");
-        // Trigger an opening message from the model.
-        send({
-          type: "response.create",
-          response: {
-            instructions:
-              "Greet me in one sentence, then call the get_next_drill tool to fetch a drill and ask it aloud. Do not pre-explain.",
-          },
-        });
+        if (initialDrill) {
+          pushDrill(initialDrill);
+        } else {
+          send({
+            type: "response.create",
+            response: {
+              instructions:
+                "Greet me in one sentence and tell me to click Start to pick a drill. Do not pre-explain.",
+            },
+          });
+        }
       };
 
       dc.onmessage = (msg) => {
@@ -161,7 +194,16 @@ export function useRealtime(): RealtimeHandle {
     };
   }, [stop]);
 
-  return { status, error, start, stop, transcript, audioEl: audioElRef, send };
+  return {
+    status,
+    error,
+    start,
+    stop,
+    transcript,
+    audioEl: audioElRef,
+    send,
+    pushDrill,
+  };
 }
 
 function handleEvent(

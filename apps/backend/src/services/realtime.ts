@@ -28,17 +28,27 @@ export async function mintRealtimeClientSecret(opts: {
     throw new Error("OPENAI_API_KEY is not set");
   }
 
-  const body = {
-    session: {
-      type: "realtime",
-      model: config.realtimeModel,
-      audio: {
-        output: { voice: opts.voice ?? config.realtimeVoice },
-      },
-      reasoning: { effort: opts.reasoningEffort ?? "low" },
-      instructions: opts.instructions,
-    },
+  // Keep local instructions as the default so a fresh checkout works without
+  // a server-side Prompt Library id.
+  const session: Record<string, unknown> = {
+    type: "realtime",
+    model: config.realtimeModel,
+    audio: { output: { voice: opts.voice ?? config.realtimeVoice } },
+    reasoning: { effort: opts.reasoningEffort ?? "low" },
   };
+
+  if (config.realtimePromptId) {
+    session.prompt = config.realtimePromptVersion
+      ? {
+          id: config.realtimePromptId,
+          version: config.realtimePromptVersion,
+        }
+      : { id: config.realtimePromptId };
+  } else {
+    session.instructions = opts.instructions;
+  }
+
+  const body = { session };
 
   const resp = await fetch(
     "https://api.openai.com/v1/realtime/client_secrets",

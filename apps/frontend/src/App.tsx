@@ -40,6 +40,13 @@ export function App() {
     if (realtime.transcript) setTranscript(realtime.transcript);
   }, [realtime.transcript]);
 
+  // When a new drill is selected while voice is live, push it to the agent.
+  useEffect(() => {
+    if (drill && realtime.status === "connected") {
+      realtime.pushDrill(drill.question_text);
+    }
+  }, [drill, realtime.pushDrill, realtime.status]);
+
   useEffect(() => {
     api
       .health()
@@ -183,7 +190,7 @@ export function App() {
                 onClick={() =>
                   realtime.status === "connected"
                     ? realtime.stop()
-                    : realtime.start()
+                    : realtime.start(drill?.question_text)
                 }
                 disabled={realtime.status === "connecting"}
               >

@@ -18,6 +18,10 @@ export const config = {
   realtimeModel: process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime-2",
   gradingModel: process.env.OPENAI_GRADING_MODEL ?? "gpt-4.1-mini",
   realtimeVoice: process.env.REALTIME_VOICE ?? "marin",
+  // Optional: reference an OpenAI server-side prompt (Prompt Library) instead
+  // of inlining local Realtime instructions.
+  realtimePromptId: process.env.OPENAI_REALTIME_PROMPT_ID ?? "",
+  realtimePromptVersion: process.env.OPENAI_REALTIME_PROMPT_VERSION ?? "",
   frontendOrigin: process.env.FRONTEND_ORIGIN ?? "http://localhost:5173",
   useOfflineGrader:
     process.env.USE_OFFLINE_GRADER === "1" || !process.env.OPENAI_API_KEY,

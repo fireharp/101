@@ -33,7 +33,17 @@ export async function mintRealtimeClientSecret(opts: {
   const session: Record<string, unknown> = {
     type: "realtime",
     model: config.realtimeModel,
-    audio: { output: { voice: opts.voice ?? config.realtimeVoice } },
+    audio: {
+      input: {
+        transcription: {
+          model: config.realtimeTranscriptionModel,
+          ...(config.realtimeTranscriptionLanguage
+            ? { language: config.realtimeTranscriptionLanguage }
+            : {}),
+        },
+      },
+      output: { voice: opts.voice ?? config.realtimeVoice },
+    },
     reasoning: { effort: opts.reasoningEffort ?? "low" },
   };
 

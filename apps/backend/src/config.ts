@@ -16,6 +16,11 @@ export const config = {
   seedsDir: path.resolve(path.join(__dirname, "..", "seeds", "drills")),
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   realtimeModel: process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime-2",
+  realtimeTranscriptionModel:
+    process.env.OPENAI_REALTIME_TRANSCRIPTION_MODEL ??
+    "gpt-4o-mini-transcribe",
+  realtimeTranscriptionLanguage:
+    process.env.OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE ?? "",
   gradingModel: process.env.OPENAI_GRADING_MODEL ?? "gpt-4.1-mini",
   realtimeVoice: process.env.REALTIME_VOICE ?? "marin",
   // Optional: reference an OpenAI server-side prompt (Prompt Library) instead

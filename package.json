@@ -15,5 +15,8 @@
       "better-sqlite3",
       "esbuild"
     ]
+  },
+  "devDependencies": {
+    "playwright": "1.58.0"
   }
 }

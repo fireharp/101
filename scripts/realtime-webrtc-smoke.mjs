@@ -207,6 +207,34 @@ async function main() {
           { timeout: 90000 },
         )
         .then(async () => {
+          // Wait for the agent's grade-announcement response to finish
+          // before sending the stop message. `response.create` issued
+          // while a response is in flight may be dropped or queued
+          // behind autonomy backstops; we need the agent to be idle.
+          await page
+            .waitForFunction(
+              () => {
+                const events = window.__drillRealtimeDebug?.events ?? [];
+                const lastGradeIdx = events
+                  .map((e, i) => ({ e, i }))
+                  .filter(
+                    ({ e }) =>
+                      e.type === "tool_call.handled" &&
+                      e.state === "grade_attempt",
+                  )
+                  .map(({ i }) => i)
+                  .pop();
+                if (lastGradeIdx === undefined) return false;
+                return events
+                  .slice(lastGradeIdx)
+                  .some((e) => e.type === "response.done");
+              },
+              undefined,
+              { timeout: 30000 },
+            )
+            .catch(() => {
+              /* agent might never finish; smoke will time out below */
+            });
           await page.evaluate(() => {
             const send = window.__drillRealtimeSend;
             if (!send) return;

@@ -65,7 +65,7 @@ engines/
 
 | Layer | Command | When it runs |
 | --- | --- | --- |
-| YAML drill linter | `pnpm verify:drills` | Every PR via CI. Validates `seeds/drills/*.yaml` against the seed schema; flags duplicate ids. |
+| YAML drill linter | `pnpm verify:drills` | Every PR via CI. Validates `seeds/drills/*.yaml` against the seed schema; flags duplicate ids; warns on quality smells (empty rubric, tiny canonical answer, terse question). Pass `-- --strict` to fail on warnings. |
 | Backend unit + route | `pnpm -r test` | Every PR via CI. `node:test` + Express on an ephemeral port. |
 | REST drill loop | `pnpm smoke:drill-loop` | Every PR via CI. Boots its own backend. Offline grader. |
 | Browser drill loop | `pnpm smoke:browser` | Every PR via CI. Playwright, no mic. Asserts grade panel + history + events timeline. |
@@ -74,7 +74,22 @@ engines/
 | Realtime autonomy | `pnpm smoke:realtime:loop` | Local only — proves ≥ 3 calls incl. `get_next_drill`. |
 | Realtime stop | `pnpm smoke:realtime:end` | Local only — proves `end_session_summary` after "Stop". |
 
-CI workflow lives at `.github/workflows/ci.yml` and runs the offline four.
+### CI workflows
+
+| File | Trigger | What it runs |
+| --- | --- | --- |
+| `.github/workflows/ci.yml` | every PR + push to main | drill linter, build, tests, REST + browser smokes (offline four) |
+| `.github/workflows/realtime-smoke.yml` | daily cron (09:00 UTC), manual dispatch, push to main that touches realtime code | `smoke:realtime:loop` + `smoke:realtime:end` — daily liveness check on the OpenAI voice loop |
+
+The realtime workflow skips itself gracefully when `OPENAI_API_KEY` isn't
+set as a repo secret, so forks and contributor branches don't fail.
+Optional repo *variables* `OPENAI_REALTIME_PROMPT_ID` /
+`OPENAI_REALTIME_PROMPT_VERSION` are passed through if defined.
+
+For a pre-release / pre-walk-away "is everything green?" check, use
+`pnpm smoke:all` (or `pnpm smoke:all --offline-only` if you don't want
+to spend OpenAI tokens). It runs every layer in sequence and prints a
+pass/fail table with timing.
 
 ## Recipes
 

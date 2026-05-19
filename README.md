@@ -397,6 +397,29 @@ Run everything offline in one shot:
 pnpm check          # verify drill YAML + build + tests + REST smoke + browser smoke
 ```
 
+Or run **all** smokes (offline + realtime) with a pass/fail summary:
+
+```bash
+pnpm smoke:all                 # 9 layers, ~5 minutes; needs OPENAI_API_KEY
+pnpm smoke:all --offline-only  # skip the 4 realtime smokes
+```
+
+Sample output:
+
+```
+▶ verify:drills…✓ verify:drills (0.5s)
+▶ build…✓ build (1.8s)
+▶ test (unit + route)…✓ test (unit + route) (0.9s)
+▶ smoke:drill-loop…✓ smoke:drill-loop (1.4s)
+▶ smoke:browser…✓ smoke:browser (2.7s)
+▶ smoke:realtime…✓ smoke:realtime (62.0s)
+▶ smoke:realtime:multi…✓ smoke:realtime:multi (67.8s)
+▶ smoke:realtime:loop…✓ smoke:realtime:loop (73.9s)
+▶ smoke:realtime:end…✓ smoke:realtime:end (77.2s)
+
+9/9 passed
+```
+
 You can run the drill linter on its own:
 
 ```bash

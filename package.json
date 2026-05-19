@@ -18,7 +18,8 @@
     "smoke:drill-loop": "node scripts/drill-loop-smoke.mjs",
     "smoke:browser": "node scripts/drill-loop-browser-smoke.mjs",
     "verify:drills": "pnpm --filter @drill/backend verify:drills",
-    "check": "pnpm verify:drills && pnpm build && pnpm test && pnpm smoke:drill-loop && pnpm smoke:browser"
+    "check": "pnpm verify:drills && pnpm build && pnpm test && pnpm smoke:drill-loop && pnpm smoke:browser",
+    "smoke:all": "node scripts/smoke-all.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

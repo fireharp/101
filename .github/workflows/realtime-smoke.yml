@@ -1,0 +1,102 @@
+name: Realtime smoke (scheduled)
+
+# Daily liveness check on the OpenAI Realtime voice loop. Runs the two
+# strictest realtime smokes: `:loop` (proves the agent calls
+# get_next_drill autonomously after grading) and `:end` (proves
+# end_session_summary fires on a "Stop" message). Skips gracefully when
+# the OPENAI_API_KEY secret is missing — so forks and contributor
+# branches don't fail.
+
+on:
+  schedule:
+    # 09:00 UTC daily ≈ 02:00 PT / 05:00 ET. Off-peak; OpenAI tokens are
+    # cheaper to spend when you're not also using the API for real work.
+    - cron: "0 9 * * *"
+  workflow_dispatch: # let humans trigger ad-hoc
+  push:
+    branches: [main, master]
+    paths:
+      - "apps/backend/src/services/realtime.ts"
+      - "apps/backend/src/routes/index.ts"
+      - "apps/frontend/src/useRealtime.ts"
+      - "apps/backend/seeds/realtime-prompt.md"
+      - "scripts/realtime-webrtc-smoke.mjs"
+
+jobs:
+  realtime-smoke:
+    name: Realtime autonomy + stop
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check OpenAI key
+        id: gate
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::OPENAI_API_KEY secret not set — skipping realtime smokes."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        if: steps.gate.outputs.skip != 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.gate.outputs.skip != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Force rebuild native modules
+        if: steps.gate.outputs.skip != 'true'
+        run: pnpm rebuild -r better-sqlite3
+
+      - name: Install Playwright browser
+        if: steps.gate.outputs.skip != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build
+        if: steps.gate.outputs.skip != 'true'
+        run: pnpm -r build
+
+      - name: Realtime autonomy loop smoke
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_REALTIME_PROMPT_ID: ${{ vars.OPENAI_REALTIME_PROMPT_ID }}
+          OPENAI_REALTIME_PROMPT_VERSION: ${{ vars.OPENAI_REALTIME_PROMPT_VERSION }}
+          HEADLESS: "1"
+        run: pnpm smoke:realtime:loop
+
+      - name: Realtime stop / end_session_summary smoke
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_REALTIME_PROMPT_ID: ${{ vars.OPENAI_REALTIME_PROMPT_ID }}
+          OPENAI_REALTIME_PROMPT_VERSION: ${{ vars.OPENAI_REALTIME_PROMPT_VERSION }}
+          HEADLESS: "1"
+        run: pnpm smoke:realtime:end
+
+      - name: Upload screenshots on failure
+        if: failure() && steps.gate.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: realtime-smoke-screenshots
+          path: /tmp/realtime-webrtc-smoke-*.png
+          if-no-files-found: ignore
+          retention-days: 14

@@ -239,6 +239,30 @@ export const attempts = {
     };
   },
 
+  /**
+   * Returns prior graded attempts for this (user, drill), newest first.
+   * Used to show "last time you scored 0.42, time before 0.55" deltas.
+   */
+  priorForDrill(
+    userId: string,
+    drillId: string,
+    limit = 5,
+  ): { score: number; verdict: string | null; created_at: string }[] {
+    return db
+      .prepare(
+        `SELECT score, verdict, created_at
+           FROM drill_attempts
+           WHERE user_id = ? AND drill_id = ? AND score IS NOT NULL
+           ORDER BY created_at DESC
+           LIMIT ?`,
+      )
+      .all(userId, drillId, limit) as {
+      score: number;
+      verdict: string | null;
+      created_at: string;
+    }[];
+  },
+
   recentDrillIds(userId: string, limit = 20): string[] {
     const rows = db
       .prepare(
@@ -386,6 +410,14 @@ export const cards = {
            LIMIT ?`,
       )
       .all(userId, limit) as GeneratedCard[];
+  },
+
+  all(userId: string): GeneratedCard[] {
+    return db
+      .prepare(
+        `SELECT * FROM generated_cards WHERE user_id = ? ORDER BY created_at DESC`,
+      )
+      .all(userId) as GeneratedCard[];
   },
 
   /**

@@ -5,6 +5,7 @@ import {
   type GradeResult,
   type Mode,
   type SessionPayload,
+  type SessionSummary,
 } from "./api.ts";
 import { useRealtime } from "./useRealtime.ts";
 
@@ -52,6 +53,24 @@ export function App() {
     due: 0,
   });
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+  const [drillBrowse, setDrillBrowse] = useState<
+    | {
+        id: string;
+        topic: string;
+        subtopic: string;
+        difficulty: number;
+        trap_type: string | null;
+        question_text: string;
+        canonical_short_answer: string;
+        rubric: { must_have: string[]; nice_to_have: string[]; red_flags: string[] };
+      }[]
+    | null
+  >(null);
+  const [drillBrowseOpen, setDrillBrowseOpen] = useState(false);
+  const [drillBrowseFilter, setDrillBrowseFilter] = useState<string>("");
+  const [expandedDrill, setExpandedDrill] = useState<string | null>(null);
+  const [summary, setSummary] = useState<SessionSummary | null>(null);
+  const [ending, setEnding] = useState(false);
 
   const startedAtRef = useRef<number | null>(null);
   const tickRef = useRef<number | null>(null);
@@ -249,6 +268,42 @@ export function App() {
     void refreshSidecar();
   }, [refreshSidecar, grade]);
 
+  const onEndSession = useCallback(async () => {
+    if (!session) return;
+    setEnding(true);
+    setError(null);
+    try {
+      const s = await api.endSession(session.id);
+      stopTimer();
+      setSummary(s);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setEnding(false);
+    }
+  }, [session, stopTimer]);
+
+  const onResetSession = useCallback(() => {
+    stopTimer();
+    setSummary(null);
+    setSession(null);
+    setDrill(null);
+    setGrade(null);
+    setTranscript("");
+  }, [stopTimer]);
+
+  const onOpenDrillBrowse = useCallback(async () => {
+    setDrillBrowseOpen((v) => !v);
+    if (!drillBrowse) {
+      try {
+        const r = await api.drills();
+        setDrillBrowse(r.drills);
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    }
+  }, [drillBrowse]);
+
   const onReviewCard = useCallback(
     async (cardId: string, quality: 0 | 1) => {
       try {
@@ -270,12 +325,36 @@ export function App() {
     <div className="app">
       <header className="app-header">
         <h1>GPT Realtime Interview Drill Coach</h1>
-        <div className="status">
-          {health
-            ? `${health.drills} drills · OpenAI ${
-                health.openai_configured ? "ready" : "missing key"
-              } · cards ${cardStats.due}/${cardStats.total} due`
-            : "..."}
+        <div className="row" style={{ gap: "0.5rem" }}>
+          <div className="status">
+            {health
+              ? `${health.drills} drills · OpenAI ${
+                  health.openai_configured ? "ready" : "missing key"
+                } · cards ${cardStats.due}/${cardStats.total} due`
+              : "..."}
+          </div>
+          <a
+            data-testid="export-cards"
+            href="/api/cards/export.csv"
+            download="drill-coach-cards.csv"
+            style={{
+              textDecoration: "none",
+              color: "inherit",
+              border: "1px solid var(--border)",
+              padding: "0.35rem 0.6rem",
+              borderRadius: 6,
+              fontSize: "0.85rem",
+            }}
+          >
+            Export Anki CSV
+          </a>
+          <button
+            data-testid="toggle-drill-browse"
+            onClick={onOpenDrillBrowse}
+            style={{ padding: "0.35rem 0.6rem", fontSize: "0.85rem" }}
+          >
+            {drillBrowseOpen ? "Hide" : "Browse"} drills
+          </button>
         </div>
       </header>
 
@@ -341,6 +420,23 @@ export function App() {
             <div data-testid="question" className="question">
               {drill.question_text.trim()}
             </div>
+            {drill.prior_attempts && drill.prior_attempts.length > 0 && (
+              <div
+                className="row muted"
+                data-testid="prior-attempts"
+                style={{ fontSize: "0.78rem", marginTop: "0.4rem" }}
+              >
+                <span>Prior attempts:</span>
+                {drill.prior_attempts
+                  .slice()
+                  .reverse()
+                  .map((p, i) => (
+                    <span key={i} className="tag" title={p.verdict ?? ""}>
+                      {Math.round(p.score * 100)}
+                    </span>
+                  ))}
+              </div>
+            )}
 
             <div
               className="row"
@@ -378,6 +474,14 @@ export function App() {
                 disabled={grading}
               >
                 Next drill
+              </button>
+              <button
+                data-testid="end-session"
+                onClick={onEndSession}
+                disabled={ending || grading}
+                style={{ marginLeft: "auto" }}
+              >
+                {ending ? "Ending…" : "End session"}
               </button>
             </div>
 
@@ -471,6 +575,165 @@ export function App() {
           </>
         )}
       </aside>
+
+      {summary && (
+        <section
+          className="panel"
+          data-testid="session-summary"
+          style={{ gridColumn: "1 / -1" }}
+        >
+          <div className="row" style={{ marginBottom: "0.4rem" }}>
+            <h2 style={{ margin: 0 }}>Session summary</h2>
+            <span className="tag">mode {summary.mode}</span>
+            <span className="tag">
+              {summary.drills_graded}/{summary.drills_attempted} graded
+            </span>
+            <span className="tag">avg {Math.round(summary.average_score * 100)}</span>
+            <span className="tag">
+              {summary.passes} pass · {summary.borderlines} border · {summary.fails} fail
+            </span>
+            <button
+              data-testid="reset-session"
+              onClick={onResetSession}
+              style={{ marginLeft: "auto" }}
+            >
+              Start a new session
+            </button>
+          </div>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Topics covered: {summary.topics_covered.join(", ") || "—"}
+          </p>
+          {summary.attempts.length > 0 && (
+            <div
+              style={{
+                display: "grid",
+                gap: "0.3rem",
+                gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+              }}
+            >
+              {summary.attempts.map((a) => (
+                <div className="card" key={a.attempt_id}>
+                  <div className="row" style={{ alignItems: "center" }}>
+                    {a.topic && <span className="tag">{a.topic}</span>}
+                    {a.subtopic && <span className="tag">{a.subtopic}</span>}
+                    {a.score !== null && (
+                      <span
+                        className={`tag verdict-${a.verdict ?? ""}`}
+                        style={{ marginLeft: "auto" }}
+                      >
+                        {Math.round(a.score * 100)} · {a.verdict}
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    className="muted"
+                    style={{ fontSize: "0.78rem", marginTop: "0.2rem" }}
+                  >
+                    {a.duration_seconds ?? 0}s · {a.drill_id}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {drillBrowseOpen && drillBrowse && (
+        <section
+          className="panel"
+          data-testid="drill-browse"
+          style={{ gridColumn: "1 / -1" }}
+        >
+          <div className="row" style={{ marginBottom: "0.5rem" }}>
+            <h2 style={{ margin: 0 }}>
+              Drill bank{" "}
+              <span
+                className="muted"
+                style={{ fontWeight: 400, fontSize: "0.85rem" }}
+              >
+                ({drillBrowse.length} loaded)
+              </span>
+            </h2>
+            <select
+              value={drillBrowseFilter}
+              onChange={(e) => setDrillBrowseFilter(e.target.value)}
+              style={{ marginLeft: "auto" }}
+            >
+              <option value="">All topics</option>
+              {[...new Set(drillBrowse.map((d) => d.topic))]
+                .sort()
+                .map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+            </select>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gap: "0.4rem",
+              gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))",
+            }}
+          >
+            {drillBrowse
+              .filter(
+                (d) =>
+                  !drillBrowseFilter || d.topic === drillBrowseFilter,
+              )
+              .map((d) => (
+                <div className="card" key={d.id}>
+                  <div
+                    className="row"
+                    style={{ alignItems: "center", marginBottom: "0.25rem" }}
+                  >
+                    <span className="tag">{d.topic}</span>
+                    <span className="tag">{d.subtopic}</span>
+                    <span className="tag">d{d.difficulty}</span>
+                    {d.trap_type && (
+                      <span className="tag">{d.trap_type}</span>
+                    )}
+                    <button
+                      style={{
+                        marginLeft: "auto",
+                        padding: "0.2rem 0.5rem",
+                        fontSize: "0.75rem",
+                      }}
+                      onClick={() =>
+                        setExpandedDrill((prev) =>
+                          prev === d.id ? null : d.id,
+                        )
+                      }
+                    >
+                      {expandedDrill === d.id ? "Hide" : "Show"} rubric
+                    </button>
+                  </div>
+                  <div style={{ fontSize: "0.85rem" }}>{d.question_text.trim()}</div>
+                  {expandedDrill === d.id && (
+                    <div
+                      style={{
+                        marginTop: "0.5rem",
+                        fontSize: "0.78rem",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      <strong>must:</strong>{" "}
+                      {d.rubric.must_have.join(" · ")}
+                      <br />
+                      <strong>nice:</strong>{" "}
+                      {d.rubric.nice_to_have.join(" · ") || "—"}
+                      <br />
+                      <strong>red flags:</strong>{" "}
+                      {d.rubric.red_flags.join(" · ") || "—"}
+                      <br />
+                      <strong>ideal:</strong> {d.canonical_short_answer}
+                    </div>
+                  )}
+                </div>
+              ))}
+          </div>
+        </section>
+      )}
 
       <section
         className="panel"

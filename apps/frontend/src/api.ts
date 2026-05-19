@@ -18,6 +18,40 @@ export interface DrillPayload {
     nice_to_have: string[];
     red_flags: string[];
   };
+  prior_attempts?: {
+    score: number;
+    verdict: string | null;
+    created_at: string;
+  }[];
+}
+
+export interface SessionSummary {
+  session_id: string;
+  mode: Mode;
+  started_at: string;
+  ended_at: string | null;
+  drills_attempted: number;
+  drills_graded: number;
+  average_score: number;
+  passes: number;
+  borderlines: number;
+  fails: number;
+  topics_covered: string[];
+  weakness_after: {
+    topic: string;
+    subtopic: string;
+    weakness_score: number;
+    exposure_count: number;
+  }[];
+  attempts: {
+    attempt_id: string;
+    drill_id: string;
+    topic: string | null;
+    subtopic: string | null;
+    score: number | null;
+    verdict: string | null;
+    duration_seconds: number | null;
+  }[];
 }
 
 export interface SessionPayload {
@@ -151,6 +185,34 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ quality }),
     }),
+
+  sessionSummary: (sessionId: string) =>
+    jsonFetch<SessionSummary>(`/api/drill-sessions/${sessionId}/summary`),
+
+  endSession: (sessionId: string) =>
+    jsonFetch<SessionSummary>(`/api/drill-sessions/${sessionId}/end`, {
+      method: "POST",
+    }),
+
+  drills: (topic?: string) =>
+    jsonFetch<{
+      count: number;
+      drills: {
+        id: string;
+        topic: string;
+        subtopic: string;
+        difficulty: number;
+        trap_type: string | null;
+        question_text: string;
+        canonical_short_answer: string;
+        rubric: {
+          must_have: string[];
+          nice_to_have: string[];
+          red_flags: string[];
+        };
+        tags: string[];
+      }[];
+    }>(`/api/drills${topic ? `?topic=${encodeURIComponent(topic)}` : ""}`),
 
   toolCall: (
     sessionId: string,

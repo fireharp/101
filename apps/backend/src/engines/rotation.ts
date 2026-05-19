@@ -51,6 +51,16 @@ export function selectNextDrill(opts: RotationOptions): DrillItem | null {
       filtered = pool.filter((d) => weakKeys.has(`${d.topic}:${d.subtopic}`));
       if (filtered.length === 0) filtered = pool;
     }
+  } else if (opts.mode === "mock_interview") {
+    // Mock interview policy:
+    //  - Floor at difficulty 3 (cut warm-ups) when enough candidates exist.
+    //  - Prefer drills the user has never attempted at all, if any remain.
+    //  - Spread topics aggressively across the session.
+    const hard = pool.filter((d) => d.difficulty >= 3);
+    if (hard.length >= 5) filtered = hard;
+    const seen = new Set(recent);
+    const unseen = filtered.filter((d) => !seen.has(d.id));
+    if (unseen.length >= 3) filtered = unseen;
   }
 
   const now = Date.now();
@@ -69,15 +79,26 @@ export function selectNextDrill(opts: RotationOptions): DrillItem | null {
       exactRepeatPenalty: exactRepeatPenalty(drill, recentInSession),
     };
 
-    const score =
-      0.35 * components.due +
-      0.25 * components.weakness +
-      0.15 * components.novelty +
-      0.1 * components.difficulty +
-      0.1 * components.topicBalance +
-      0.05 * components.trapDiversity -
-      0.5 * components.recentRepeatPenalty -
-      0.3 * components.exactRepeatPenalty;
+    // Mock interview re-weights toward variety and high difficulty,
+    // away from due/weakness which assume an ongoing study loop.
+    const isMock = opts.mode === "mock_interview";
+    const score = isMock
+      ? 0.4 * components.novelty +
+        0.2 * components.topicBalance +
+        0.2 * components.difficulty +
+        0.1 * components.weakness +
+        0.05 * components.due +
+        0.05 * components.trapDiversity -
+        0.6 * components.recentRepeatPenalty -
+        0.4 * components.exactRepeatPenalty
+      : 0.35 * components.due +
+        0.25 * components.weakness +
+        0.15 * components.novelty +
+        0.1 * components.difficulty +
+        0.1 * components.topicBalance +
+        0.05 * components.trapDiversity -
+        0.5 * components.recentRepeatPenalty -
+        0.3 * components.exactRepeatPenalty;
 
     return { drill, score, components };
   });

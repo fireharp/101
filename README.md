@@ -114,6 +114,19 @@ pnpm --filter @drill/backend seed   # re-seed drills from YAML
 
 Top 5 candidates are weighted-random-picked so the app is not predictable.
 
+`mock_interview` mode swaps the formula to prefer variety and high
+difficulty over due/weakness:
+
+```
+0.40 * novelty + 0.20 * topicBalance + 0.20 * difficulty
++ 0.10 * weakness + 0.05 * due + 0.05 * trapDiversity
+- 0.60 * recentRepeatPenalty - 0.40 * exactRepeatPenalty
+```
+
+and also pre-filters the pool to difficulty ≥ 3 plus drills the user hasn't
+attempted recently, so a "mock interview" session feels different from a
+study session.
+
 ### Grading (LOCAL.md §10)
 
 `apps/backend/src/engines/grading.ts` has two graders:
@@ -146,9 +159,14 @@ Verdict: `>= 0.80 pass`, `0.60–0.79 borderline`, `< 0.60 fail`.
 | `POST` | `/api/drill-sessions/:id/next` | pick next drill via rotation |
 | `POST` | `/api/drill-attempts/:id/transcript` | save transcript + duration |
 | `POST` | `/api/drill-attempts/:id/grade` | grade an attempt (LLM or offline) |
-| `GET`  | `/api/cards/due` | due review cards |
-| `GET`  | `/api/progress` | per-topic skill state |
+| `GET`  | `/api/cards/due` | due review cards + total/due stats |
+| `POST` | `/api/cards/:id/review` | record SM-2-lite review (`quality` 0/1) |
+| `GET`  | `/api/cards/export.csv` | Anki-importable CSV (`front,back,tags`) |
+| `GET`  | `/api/progress` | per-topic weakness state |
 | `GET`  | `/api/drills` | drill bank browse |
+| `POST` | `/api/realtime/tool-call` | dispatch for the voice agent's tool calls |
+| `GET`  | `/api/drill-sessions/:id/summary` | per-session stats (attempts, scores, topics) |
+| `POST` | `/api/drill-sessions/:id/end` | mark ended + redirect to summary |
 
 ## Seed drills
 
@@ -157,6 +175,32 @@ YAML files in `apps/backend/seeds/drills/` are loaded on every server start
 
 To add a drill: create or edit a YAML file, run `pnpm --filter @drill/backend seed`,
 or just restart the backend.
+
+### Layer-2 templates (LOCAL.md §9)
+
+Templates live in `apps/backend/seeds/templates/*.yaml`. Each declares a
+`template_text`, a `rubric_template`, a `canonical_answer_template`, and a
+list of `variants` with named `vars`. The expander interpolates the variables
+into every field and upserts concrete `drill_items` rows.
+
+```bash
+pnpm --filter @drill/backend seed:templates
+```
+
+One composite-index template currently expands to 4 variants
+(orders / events / messages / invoices), all tagged with `tmpl:<id>` so
+template-derived drills are filterable.
+
+### Layer-3 LLM-generated drafts (LOCAL.md §9 Layer 3)
+
+```bash
+pnpm --filter @drill/backend gen:drills -- \
+  --topic caching --subtopic eviction --count 3 --difficulty 3
+```
+
+Inserts drills as `is_active=false` drafts so the rotation engine never
+serves them until a human flips the bit. Tagged with `gen:llm` for filtering.
+Uses `OPENAI_GRADING_MODEL` (default `gpt-4.1-mini`).
 
 ## What is *not* in the MVP
 

@@ -10,6 +10,7 @@
     "start": "node dist/server.js",
     "seed": "tsx src/seed.ts",
     "seed:templates": "tsx src/seed-templates.ts",
+    "gen:drills": "tsx src/gen-drills.ts",
     "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {

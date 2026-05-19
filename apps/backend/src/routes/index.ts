@@ -130,6 +130,7 @@ apiRouter.post(
       drill_id: drill.id,
     });
 
+    const prior = attempts.priorForDrill(userId, drill.id, 5);
     res.json({
       drill: {
         drill_id: drill.id,
@@ -140,6 +141,7 @@ apiRouter.post(
         difficulty: drill.difficulty,
         expected_answer_shape: drill.rubric.must_have,
         rubric: drill.rubric,
+        prior_attempts: prior,
       },
     });
   },
@@ -249,6 +251,94 @@ apiRouter.post(
   },
 );
 
+function buildSessionSummary(
+  userId: string,
+  session: {
+    id: string;
+    mode: Mode;
+    started_at: string;
+    ended_at: string | null;
+  },
+) {
+  const sessionAttempts = attempts.listForSession(session.id);
+  const graded = sessionAttempts.filter((a) => a.score !== null);
+  const avg =
+    graded.length > 0
+      ? graded.reduce((s, a) => s + (a.score ?? 0), 0) / graded.length
+      : 0;
+
+  const topicSet = new Set<string>();
+  const itemRows = sessionAttempts.map((a) => {
+    const drill = drills.get(a.drill_id);
+    if (drill) topicSet.add(drill.topic);
+    return {
+      attempt_id: a.id,
+      drill_id: a.drill_id,
+      topic: drill?.topic ?? null,
+      subtopic: drill?.subtopic ?? null,
+      score: a.score,
+      verdict: a.verdict,
+      duration_seconds: a.duration_seconds,
+    };
+  });
+
+  return {
+    session_id: session.id,
+    mode: session.mode,
+    started_at: session.started_at,
+    ended_at: session.ended_at,
+    drills_attempted: sessionAttempts.length,
+    drills_graded: graded.length,
+    average_score: Math.round(avg * 1000) / 1000,
+    passes: graded.filter((a) => a.verdict === "pass").length,
+    borderlines: graded.filter((a) => a.verdict === "borderline").length,
+    fails: graded.filter((a) => a.verdict === "fail").length,
+    topics_covered: [...topicSet],
+    weakness_after: skillState
+      .getAll(userId)
+      .sort((a, b) => b.weakness_score - a.weakness_score),
+    attempts: itemRows,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* GET /api/drill-sessions/:id/summary                                */
+/* End-of-session stats: drills attempted, average score, topics      */
+/* covered, weakness state snapshot.                                  */
+/* ------------------------------------------------------------------ */
+apiRouter.get(
+  "/drill-sessions/:id/summary",
+  (req: Request, res: Response) => {
+    const userId = userIdFromRequest(req);
+    const sessionId = String(req.params.id ?? "");
+    if (!sessionId) return res.status(400).json({ error: "missing id" });
+    const session = sessions.get(sessionId);
+    if (!session) return res.status(404).json({ error: "session not found" });
+    if (session.user_id !== userId) {
+      return res.status(403).json({ error: "session not owned by user" });
+    }
+    res.json(buildSessionSummary(userId, session));
+  },
+);
+
+/* ------------------------------------------------------------------ */
+/* POST /api/drill-sessions/:id/end                                   */
+/* Marks the session ended_at and returns the same summary.           */
+/* ------------------------------------------------------------------ */
+apiRouter.post("/drill-sessions/:id/end", (req: Request, res: Response) => {
+  const userId = userIdFromRequest(req);
+  const sessionId = String(req.params.id ?? "");
+  if (!sessionId) return res.status(400).json({ error: "missing id" });
+  const session = sessions.get(sessionId);
+  if (!session) return res.status(404).json({ error: "session not found" });
+  if (session.user_id !== userId) {
+    return res.status(403).json({ error: "session not owned by user" });
+  }
+  sessions.end(session.id);
+  const ended = sessions.get(session.id) ?? { ...session, ended_at: new Date().toISOString() };
+  res.json(buildSessionSummary(userId, ended));
+});
+
 /* ------------------------------------------------------------------ */
 /* GET /api/cards/due                                                 */
 /* ------------------------------------------------------------------ */
@@ -264,6 +354,30 @@ apiRouter.get("/cards/due", (req: Request, res: Response) => {
 /* ------------------------------------------------------------------ */
 const cardReviewSchema = z.object({
   quality: z.union([z.literal(0), z.literal(1)]),
+});
+
+/* ------------------------------------------------------------------ */
+/* GET /api/cards/export.csv                                          */
+/* Anki-importable CSV. Columns: front, back, tags.                   */
+/* ------------------------------------------------------------------ */
+apiRouter.get("/cards/export.csv", (req: Request, res: Response) => {
+  const userId = userIdFromRequest(req);
+  const all = cards.all(userId);
+  const escape = (s: string) =>
+    /[,"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  const lines = ["front,back,tags"];
+  for (const c of all) {
+    const tags = [c.topic, c.subtopic].filter(Boolean).join(" ");
+    lines.push(
+      [escape(c.front), escape(c.back), escape(tags)].join(","),
+    );
+  }
+  res.setHeader("content-type", "text/csv; charset=utf-8");
+  res.setHeader(
+    "content-disposition",
+    `attachment; filename="drill-coach-cards.csv"`,
+  );
+  res.send(lines.join("\n") + "\n");
 });
 
 apiRouter.post("/cards/:id/review", (req: Request, res: Response) => {

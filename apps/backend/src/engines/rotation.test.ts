@@ -167,6 +167,43 @@ test("weak_topics mode surfaces high-weakness subtopics", () => {
   );
 });
 
+test("mock_interview mode prefers difficulty >= 3 and spreads topics", () => {
+  // Seed a couple of difficulty-1 / -2 warm-ups alongside the harder ones.
+  seedDrill("warm-1", "system_design", "warmup", 1);
+  seedDrill("warm-2", "database", "warmup", 2);
+
+  const session = sessions.create(userId, "mock_interview");
+  const counts = new Map<string, number>();
+  const difficulties: number[] = [];
+  for (let i = 0; i < 12; i++) {
+    const drill = selectNextDrill({
+      user_id: userId,
+      session_id: session.id,
+      mode: "mock_interview",
+    });
+    assert.ok(drill);
+    attempts.createPending({
+      user_id: userId,
+      session_id: session.id,
+      drill_id: drill!.id,
+    });
+    counts.set(drill!.topic, (counts.get(drill!.topic) ?? 0) + 1);
+    difficulties.push(drill!.difficulty);
+  }
+  // No more than ~half the picks should land in any single topic.
+  const maxPerTopic = Math.max(...counts.values());
+  assert.ok(
+    maxPerTopic <= 7,
+    `mock_interview should spread topics; max per topic was ${maxPerTopic}/12`,
+  );
+  const avgDifficulty =
+    difficulties.reduce((s, d) => s + d, 0) / difficulties.length;
+  assert.ok(
+    avgDifficulty >= 2.8,
+    `expected high difficulty avg; got ${avgDifficulty.toFixed(2)}`,
+  );
+});
+
 test("rotation handles an empty pool gracefully", () => {
   const session = sessions.create("ghost-user", "mixed");
   // Deactivate all drills temporarily.

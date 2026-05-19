@@ -280,6 +280,63 @@ test("tool-call dispatch: get_next_drill rejects wrong user", async () => {
   assert.ok(ok.json.result.drill_id, "should return a drill_id");
 });
 
+test("PATCH /api/drills/:id updates rubric without changing is_active", async () => {
+  const before = await http<{ drills: { id: string; is_active: boolean }[] }>(
+    "GET",
+    "/api/drills",
+  );
+  const fxBefore = before.json.drills.find((d) => d.id === "fx_db_001");
+  assert.ok(fxBefore);
+
+  const patch = await fetch(`${base}/api/drills/fx_db_001`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({
+      canonical_short_answer:
+        "Updated: composite B-tree on (category_id, price), verify with EXPLAIN ANALYZE.",
+      rubric: {
+        must_have: ["composite B-tree", "category_id first", "EXPLAIN ANALYZE"],
+        nice_to_have: ["covering index"],
+        red_flags: ["index every column"],
+      },
+      difficulty: 4,
+    }),
+  });
+  assert.equal(patch.status, 200);
+  const patchJson = (await patch.json()) as {
+    drill: {
+      canonical_short_answer: string;
+      rubric: { must_have: string[] };
+      difficulty: number;
+      is_active: boolean;
+    };
+  };
+  assert.match(patchJson.drill.canonical_short_answer, /Updated/);
+  assert.equal(patchJson.drill.difficulty, 4);
+  assert.ok(patchJson.drill.rubric.must_have.includes("EXPLAIN ANALYZE"));
+  assert.equal(
+    patchJson.drill.is_active,
+    fxBefore.is_active,
+    "PATCH must not toggle is_active",
+  );
+
+  // Invalid body (missing required rubric fields) → 400.
+  const bad = await fetch(`${base}/api/drills/fx_db_001`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({ rubric: { must_have: [], nice_to_have: [], red_flags: [] } }),
+  });
+  assert.equal(bad.status, 400);
+
+  // Nonexistent id → 404.
+  const missing = await fetch(`${base}/api/drills/does_not_exist/`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({ difficulty: 2 }),
+  });
+  assert.equal(missing.status, 404);
+});
+
 test("realtime token endpoint returns 503 without OPENAI_API_KEY", async () => {
   const r = await http<{ error?: string }>("POST", "/api/realtime/token", {});
   assert.equal(r.status, 503);

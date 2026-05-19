@@ -112,6 +112,52 @@ export const drills = {
     return row.c;
   },
 
+  /**
+   * Partial update of editable fields. Returns the updated drill or null
+   * if not found.
+   */
+  patch(
+    id: string,
+    fields: {
+      question_text?: string;
+      canonical_short_answer?: string;
+      canonical_deep_answer?: string | null;
+      difficulty?: number;
+      trap_type?: string | null;
+      rubric?: {
+        must_have: string[];
+        nice_to_have: string[];
+        red_flags: string[];
+      };
+      tags?: string[];
+    },
+  ): DrillItem | null {
+    const existing = this.get(id);
+    if (!existing) return null;
+    const merged = {
+      ...existing,
+      question_text: fields.question_text ?? existing.question_text,
+      canonical_short_answer:
+        fields.canonical_short_answer ?? existing.canonical_short_answer,
+      canonical_deep_answer:
+        fields.canonical_deep_answer !== undefined
+          ? fields.canonical_deep_answer
+          : existing.canonical_deep_answer,
+      difficulty: (fields.difficulty ??
+        existing.difficulty) as DrillItem["difficulty"],
+      trap_type:
+        fields.trap_type !== undefined ? fields.trap_type : existing.trap_type,
+      rubric: fields.rubric ?? existing.rubric,
+      tags: fields.tags ?? existing.tags,
+      // If the rubric changed, mirror to expected_answer too — they used to
+      // diverge but in our app they're effectively the same surface.
+      expected_answer: fields.rubric ?? existing.expected_answer,
+      is_active: existing.is_active,
+    };
+    this.upsert(merged);
+    return this.get(id);
+  },
+
   setActive(id: string, active: boolean): boolean {
     const info = db
       .prepare("UPDATE drill_items SET is_active = ? WHERE id = ?")

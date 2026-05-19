@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import {
   api,
   type DrillPayload,
@@ -72,6 +79,7 @@ export function App() {
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [ending, setEnding] = useState(false);
   const [drillCount, setDrillCount] = useState(0);
+  const [pressureMode, setPressureMode] = useState(false);
   const MOCK_TARGET = 7;
   const [drafts, setDrafts] = useState<
     | {
@@ -93,6 +101,21 @@ export function App() {
   const [testResult, setTestResult] = useState<
     Record<string, { score: number; verdict: string; missed: number } | null>
   >({});
+  const [editingDrill, setEditingDrill] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<{
+    must_have: string;
+    nice_to_have: string;
+    red_flags: string;
+    canonical_short_answer: string;
+    difficulty: number;
+  }>({
+    must_have: "",
+    nice_to_have: "",
+    red_flags: "",
+    canonical_short_answer: "",
+    difficulty: 3,
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const startedAtRef = useRef<number | null>(null);
   const tickRef = useRef<number | null>(null);
@@ -111,10 +134,10 @@ export function App() {
       realtime.status === "connected" &&
       pushedVoiceDrillRef.current !== drill.attempt_id
     ) {
-      realtime.pushDrill(drill.question_text);
+      realtime.pushDrill(drill.question_text, { pressure: pressureMode });
       pushedVoiceDrillRef.current = drill.attempt_id;
     }
-  }, [drill, realtime.pushDrill, realtime.status]);
+  }, [drill, pressureMode, realtime.pushDrill, realtime.status]);
 
   useEffect(() => {
     api
@@ -363,6 +386,61 @@ export function App() {
     [refreshDrafts],
   );
 
+  const onStartEdit = useCallback(
+    (d: {
+      id: string;
+      canonical_short_answer: string;
+      difficulty: number;
+      rubric: { must_have: string[]; nice_to_have: string[]; red_flags: string[] };
+    }) => {
+      setEditingDrill(d.id);
+      setEditForm({
+        must_have: d.rubric.must_have.join("\n"),
+        nice_to_have: d.rubric.nice_to_have.join("\n"),
+        red_flags: d.rubric.red_flags.join("\n"),
+        canonical_short_answer: d.canonical_short_answer,
+        difficulty: d.difficulty,
+      });
+    },
+    [],
+  );
+
+  const onCancelEdit = useCallback(() => {
+    setEditingDrill(null);
+  }, []);
+
+  const onSaveEdit = useCallback(
+    async (id: string) => {
+      setSavingEdit(true);
+      setError(null);
+      const splitLines = (s: string) =>
+        s
+          .split("\n")
+          .map((x) => x.trim())
+          .filter(Boolean);
+      try {
+        await api.patchDrill(id, {
+          canonical_short_answer: editForm.canonical_short_answer,
+          difficulty: editForm.difficulty,
+          rubric: {
+            must_have: splitLines(editForm.must_have),
+            nice_to_have: splitLines(editForm.nice_to_have),
+            red_flags: splitLines(editForm.red_flags),
+          },
+        });
+        // Refresh browse list to reflect saved values.
+        const r = await api.drills();
+        setDrillBrowse(r.drills);
+        setEditingDrill(null);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setSavingEdit(false);
+      }
+    },
+    [editForm],
+  );
+
   const onTestGrade = useCallback(
     async (id: string) => {
       const text = (testTranscript[id] ?? "").trim();
@@ -440,6 +518,20 @@ export function App() {
           >
             Export Anki CSV
           </a>
+          <button
+            data-testid="pressure-mode-toggle"
+            onClick={() => setPressureMode((v) => !v)}
+            title="When on, the voice agent interrupts rambling and forces pressure follow-ups."
+            style={{
+              padding: "0.35rem 0.6rem",
+              fontSize: "0.85rem",
+              background: pressureMode ? "var(--bad)" : "var(--panel)",
+              color: pressureMode ? "#0c1220" : "inherit",
+              borderColor: pressureMode ? "var(--bad)" : "var(--border)",
+            }}
+          >
+            Pressure {pressureMode ? "ON" : "off"}
+          </button>
           <button
             data-testid="toggle-drill-browse"
             onClick={onOpenDrillBrowse}
@@ -630,7 +722,9 @@ export function App() {
                     return;
                   }
                   if (drill) pushedVoiceDrillRef.current = drill.attempt_id;
-                  void realtime.start(drill?.question_text);
+                  void realtime.start(drill?.question_text, {
+                    pressure: pressureMode,
+                  });
                 }}
                 disabled={realtime.status === "connecting"}
               >
@@ -980,16 +1074,138 @@ export function App() {
                         color: "var(--muted)",
                       }}
                     >
-                      <strong>must:</strong>{" "}
-                      {d.rubric.must_have.join(" · ")}
-                      <br />
-                      <strong>nice:</strong>{" "}
-                      {d.rubric.nice_to_have.join(" · ") || "—"}
-                      <br />
-                      <strong>red flags:</strong>{" "}
-                      {d.rubric.red_flags.join(" · ") || "—"}
-                      <br />
-                      <strong>ideal:</strong> {d.canonical_short_answer}
+                      {editingDrill === d.id ? (
+                        <div
+                          data-testid="rubric-editor"
+                          style={{
+                            display: "grid",
+                            gap: "0.4rem",
+                            color: "var(--text)",
+                          }}
+                        >
+                          <label style={{ display: "grid", gap: "0.2rem" }}>
+                            <span style={{ fontSize: "0.75rem" }}>
+                              Must-have (one per line)
+                            </span>
+                            <textarea
+                              rows={4}
+                              value={editForm.must_have}
+                              onChange={(e) =>
+                                setEditForm((p) => ({
+                                  ...p,
+                                  must_have: e.target.value,
+                                }))
+                              }
+                              style={editorTextareaStyle}
+                            />
+                          </label>
+                          <label style={{ display: "grid", gap: "0.2rem" }}>
+                            <span style={{ fontSize: "0.75rem" }}>
+                              Nice-to-have
+                            </span>
+                            <textarea
+                              rows={3}
+                              value={editForm.nice_to_have}
+                              onChange={(e) =>
+                                setEditForm((p) => ({
+                                  ...p,
+                                  nice_to_have: e.target.value,
+                                }))
+                              }
+                              style={editorTextareaStyle}
+                            />
+                          </label>
+                          <label style={{ display: "grid", gap: "0.2rem" }}>
+                            <span style={{ fontSize: "0.75rem" }}>
+                              Red flags
+                            </span>
+                            <textarea
+                              rows={3}
+                              value={editForm.red_flags}
+                              onChange={(e) =>
+                                setEditForm((p) => ({
+                                  ...p,
+                                  red_flags: e.target.value,
+                                }))
+                              }
+                              style={editorTextareaStyle}
+                            />
+                          </label>
+                          <label style={{ display: "grid", gap: "0.2rem" }}>
+                            <span style={{ fontSize: "0.75rem" }}>
+                              Ideal short answer
+                            </span>
+                            <textarea
+                              rows={3}
+                              value={editForm.canonical_short_answer}
+                              onChange={(e) =>
+                                setEditForm((p) => ({
+                                  ...p,
+                                  canonical_short_answer: e.target.value,
+                                }))
+                              }
+                              style={editorTextareaStyle}
+                            />
+                          </label>
+                          <label style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+                            <span style={{ fontSize: "0.75rem" }}>Difficulty</span>
+                            <select
+                              value={editForm.difficulty}
+                              onChange={(e) =>
+                                setEditForm((p) => ({
+                                  ...p,
+                                  difficulty: Number(e.target.value),
+                                }))
+                              }
+                            >
+                              {[1, 2, 3, 4, 5].map((n) => (
+                                <option key={n} value={n}>
+                                  {n}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="row" style={{ gap: "0.4rem" }}>
+                            <button
+                              data-testid="save-rubric"
+                              className="primary"
+                              disabled={savingEdit}
+                              onClick={() => onSaveEdit(d.id)}
+                              style={{ fontSize: "0.78rem", padding: "0.25rem 0.5rem" }}
+                            >
+                              {savingEdit ? "Saving…" : "Save rubric"}
+                            </button>
+                            <button
+                              onClick={onCancelEdit}
+                              style={{ fontSize: "0.78rem", padding: "0.25rem 0.5rem" }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <strong>must:</strong>{" "}
+                          {d.rubric.must_have.join(" · ")}
+                          <br />
+                          <strong>nice:</strong>{" "}
+                          {d.rubric.nice_to_have.join(" · ") || "—"}
+                          <br />
+                          <strong>red flags:</strong>{" "}
+                          {d.rubric.red_flags.join(" · ") || "—"}
+                          <br />
+                          <strong>ideal:</strong> {d.canonical_short_answer}
+                          <div style={{ marginTop: "0.3rem" }}>
+                            <button
+                              data-testid="edit-rubric"
+                              onClick={() => onStartEdit(d)}
+                              style={{ fontSize: "0.75rem", padding: "0.2rem 0.5rem" }}
+                            >
+                              Edit rubric
+                            </button>
+                          </div>
+                        </>
+                      )}
                       <div
                         style={{
                           marginTop: "0.5rem",
@@ -1129,6 +1345,18 @@ export function App() {
     </div>
   );
 }
+
+const editorTextareaStyle: CSSProperties = {
+  width: "100%",
+  fontFamily: "inherit",
+  fontSize: "0.78rem",
+  color: "inherit",
+  background: "#0a0c12",
+  border: "1px solid var(--border)",
+  borderRadius: 6,
+  padding: "0.35rem 0.5rem",
+  resize: "vertical",
+};
 
 function formatTime(secs: number): string {
   const m = Math.floor(secs / 60)

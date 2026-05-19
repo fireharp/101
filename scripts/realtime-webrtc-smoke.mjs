@@ -90,43 +90,51 @@ async function main() {
     // ends — these typically arrive in the seconds after
     // `input_audio_buffer.speech_stopped`.
     //
-    // Two assertion levels:
+    // Three assertion levels:
     //   REALTIME_SMOKE_REQUIRE_TOOL=1 (default)  → at least 1 tool call
     //   REALTIME_SMOKE_REQUIRE_MULTI_TURN=1      → at least 2 distinct
-    //     tool names (proves the actual drill loop: ask → grade → next)
+    //     tool names (proves the agent grades after the user answered)
+    //   REALTIME_SMOKE_REQUIRE_LOOP=1            → at least 3 total tool
+    //     calls AND get_next_drill is one of them (proves the infinite
+    //     drill loop: ask → grade → ask again)
+    const requireLoop = process.env.REALTIME_SMOKE_REQUIRE_LOOP === "1";
     const requireMultiTurn =
-      process.env.REALTIME_SMOKE_REQUIRE_MULTI_TURN === "1";
-    const defaultWait = requireMultiTurn ? 90000 : 20000;
+      requireLoop || process.env.REALTIME_SMOKE_REQUIRE_MULTI_TURN === "1";
+    const defaultWait = requireLoop ? 120000 : requireMultiTurn ? 90000 : 20000;
     const toolWaitMs = Number(
       process.env.REALTIME_SMOKE_TOOL_WAIT_MS ?? defaultWait,
     );
     const requireToolCall = process.env.REALTIME_SMOKE_REQUIRE_TOOL !== "0";
     const toolWaitErr = await page
       .waitForFunction(
-        (multi) => {
+        ({ multi, loop }) => {
           const events = window.__drillRealtimeDebug?.events ?? [];
           const handled = events.filter((e) => e.type === "tool_call.handled");
-          if (!multi) return handled.length >= 1;
-          const distinct = new Set(
-            handled.map((e) => e.state).filter(Boolean),
-          );
-          return distinct.size >= 2;
+          if (!multi && !loop) return handled.length >= 1;
+          const names = handled.map((e) => e.state).filter(Boolean);
+          if (loop) {
+            return handled.length >= 3 && names.includes("get_next_drill");
+          }
+          return new Set(names).size >= 2;
         },
-        requireMultiTurn,
+        { multi: requireMultiTurn, loop: requireLoop },
         { timeout: toolWaitMs },
       )
       .then(() => null)
       .catch((err) => err);
     if (requireToolCall && toolWaitErr) {
-      throw new Error(
-        requireMultiTurn
+      const msg = requireLoop
+        ? "Agent never completed an autonomous drill loop within " +
+          toolWaitMs +
+          "ms (need ≥ 3 total tool calls including get_next_drill). Set REALTIME_SMOKE_REQUIRE_LOOP=0 to relax."
+        : requireMultiTurn
           ? "Agent never produced 2 distinct tool calls within " +
             toolWaitMs +
             "ms (no multi-turn drill loop). Set REALTIME_SMOKE_REQUIRE_MULTI_TURN=0 to relax."
           : "Agent never called a backend tool within " +
             toolWaitMs +
-            "ms; set REALTIME_SMOKE_REQUIRE_TOOL=0 to skip this assertion",
-      );
+            "ms; set REALTIME_SMOKE_REQUIRE_TOOL=0 to skip this assertion";
+      throw new Error(msg);
     }
 
     const debug = await page.evaluate(() => window.__drillRealtimeDebug);

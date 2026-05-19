@@ -225,6 +225,32 @@ export const api = {
       method: "DELETE",
     }),
 
+  patchDrill: (
+    id: string,
+    fields: {
+      question_text?: string;
+      canonical_short_answer?: string;
+      difficulty?: number;
+      trap_type?: string | null;
+      rubric?: {
+        must_have: string[];
+        nice_to_have: string[];
+        red_flags: string[];
+      };
+    },
+  ) =>
+    jsonFetch<{
+      ok: boolean;
+      drill: {
+        id: string;
+        rubric: { must_have: string[]; nice_to_have: string[]; red_flags: string[] };
+        canonical_short_answer: string;
+      };
+    }>(`/api/drills/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(fields),
+    }),
+
   testGrade: (id: string, transcript: string, durationSeconds = 45) =>
     jsonFetch<{
       drill_id: string;

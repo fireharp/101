@@ -120,7 +120,7 @@ export const DRILL_COACH_TOOLS = [
     type: "function",
     name: "get_next_drill",
     description:
-      "Pick the next drill question from the curriculum. Call this at the start of every drill turn before asking the user.",
+      "Pick the next drill question from the curriculum. Call this at the start of every drill turn, AND immediately after every grade_attempt. The session loop is infinite — keep calling this until the user says 'stop' or 'end session'.",
     parameters: {
       type: "object",
       properties: {
@@ -241,10 +241,21 @@ When the user gives a vague answer, ask one pressure follow-up such as:
 - "What breaks if write volume is high?"
 - "What would you verify with EXPLAIN?"
 
-Tool protocol:
-- Call get_next_drill at the start of each turn before asking a question.
-- Call submit_answer_transcript after the user answers.
-- Call grade_attempt after the transcript is available.
-- Call save_generated_cards after grading if there are cards.
-- Call end_session_summary when the user says they want to stop.
+Tool protocol — the loop is INFINITE. Do not stop calling tools until the
+user says "stop" or "end session". Required sequence per drill:
+
+  1. get_next_drill → speak the returned question_text verbatim.
+  2. Wait for the user's spoken answer.
+  3. submit_answer_transcript with the captured transcript + duration.
+  4. grade_attempt with the same attempt_id.
+  5. Speak score / verdict / missed points; drill missed points one at a time.
+  6. IMMEDIATELY call get_next_drill again. Do not wait for the host app
+     or the user to ask. This is non-negotiable — the curriculum lives in
+     the backend, and the loop only runs if you keep calling the tool.
+
+Optional:
+- Call save_generated_cards after grading if you generated extra cards
+  beyond what grade_attempt returned.
+- Call get_user_skill_summary sparingly to bias the next drill.
+- Call end_session_summary ONLY when the user says "stop" or "end session".
 `;

@@ -166,6 +166,7 @@ Verdict: `>= 0.80 pass`, `0.60–0.79 borderline`, `< 0.60 fail`.
 | `GET`  | `/api/drills` | drill bank browse (active only) |
 | `GET`  | `/api/drills/drafts` | Layer-3 LLM drafts (is_active=false) |
 | `POST` | `/api/drills/:id/activate` | promote a draft into the rotation pool |
+| `PATCH` | `/api/drills/:id` | edit rubric / canonical answer / difficulty / question text |
 | `POST` | `/api/drills/:id/test-grade` | dry-run grader against a sample answer (no persist) |
 | `DELETE` | `/api/drills/:id` | delete a draft (active drills are protected) |
 | `POST` | `/api/realtime/tool-call` | dispatch for the voice agent's tool calls |
@@ -210,13 +211,27 @@ Review and activate drafts from the UI: click **Show drafts** in the header
 to see every `is_active=false` drill with rubric preview, then **Activate**
 to promote into the rotation pool or **Discard** to delete.
 
-### Admin: dry-run grader (LOCAL.md §13)
+### Admin: rubric editor + dry-run grader (LOCAL.md §13)
 
-In the drill browse panel, expand any drill and the rubric panel now
-includes a **Test grade** widget — paste a sample answer, click *Run
-grader*, and see the rubric verdict (score, missed points) without
-recording an attempt. Useful for tuning rubrics or sanity-checking newly
-activated drafts.
+In the drill browse panel, expand any drill to see its rubric. Two admin
+surfaces are wired:
+
+* **Edit rubric** — opens textareas for must-have / nice-to-have / red flags
+  / canonical short answer plus a difficulty selector. Saving issues
+  `PATCH /api/drills/:id`, validates with the same Zod schema as YAML
+  seeds, and refreshes the browse list.
+* **Test grade** — paste a sample answer, run the grader against the
+  current rubric, see score + verdict + missed-points count, **without**
+  writing an attempt or touching skill state. Great for tuning rubrics on
+  newly activated Layer-3 drafts.
+
+### Pressure mode (LOCAL.md §15 MVP 3)
+
+Header **Pressure ON/off** toggle. When on, every drill push appends an
+explicit "interrupt rambling after ~10s; snap 'Default answer now.'; force
+at least one pressure follow-up" clause to the agent's per-drill
+instruction. Lets the user dial the intensity from study-buddy to
+drill-instructor without re-minting the realtime session.
 
 ## What is *not* in the MVP
 
@@ -270,10 +285,12 @@ Three layers, fastest to slowest:
 
 | Layer | Command | What it proves |
 | --- | --- | --- |
-| Unit + route tests | `pnpm -r test` | rotation engine, offline grader, AND HTTP routes (session ownership, draft activation, dry-run grader, tool-call dispatch). 19 tests. Runs Express in-process on an ephemeral port, no network. |
+| Unit + route tests | `pnpm -r test` | rotation engine, offline grader, AND HTTP routes (session ownership, draft activation, dry-run grader, tool-call dispatch, rubric editing). 20 tests. Runs Express in-process on an ephemeral port, no network. |
 | REST drill loop | `pnpm smoke:drill-loop` | end-to-end loop over HTTP for N drills with the offline grader — verifies rotation produces variety, weakness state moves, mixed verdicts. Boots its own backend on an isolated DB. |
 | Browser drill loop | `pnpm smoke:browser` | exercises App.tsx in Chromium (no mic): Start → type answer → Submit → grade panel renders → Next drill → question changes. |
-| Realtime WebRTC | `pnpm smoke:realtime` | full voice path: launches Chromium with `--use-file-for-fake-audio-capture` against a Mumbli WAV, asserts the model connects and ASR transcript appears. Requires `OPENAI_API_KEY`. |
+| Realtime WebRTC | `pnpm smoke:realtime` | full voice path: launches Chromium with `--use-file-for-fake-audio-capture` against a Mumbli WAV, asserts the model connects, ASR transcript appears, and at least 1 backend tool gets dispatched. Requires `OPENAI_API_KEY`. |
+| Realtime multi-turn | `pnpm smoke:realtime:multi` | same harness, longer wait (~90 s), asserts **≥ 2 distinct** tool calls — proves the agent runs the actual drill loop (e.g. `submit_answer_transcript` then `grade_attempt`) rather than just calling `get_next_drill` once and stopping. |
+| Realtime loop | `pnpm smoke:realtime:loop` | longest wait (~120 s), asserts ≥3 handled tool calls including `get_next_drill` so the agent grades and autonomously asks the next drill. |
 
 Run everything:
 

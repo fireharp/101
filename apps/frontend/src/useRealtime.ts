@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { api } from "./api.ts";
 
 /**
@@ -80,12 +85,15 @@ declare global {
 export interface RealtimeHandle {
   status: Status;
   error: string | null;
-  start: (initialDrill?: string) => Promise<void>;
+  start: (
+    initialDrill?: string,
+    opts?: { pressure?: boolean },
+  ) => Promise<void>;
   stop: () => Promise<void>;
   transcript: string;
   audioEl: React.RefObject<HTMLAudioElement | null>;
   send: (event: Record<string, unknown>) => void;
-  pushDrill: (question: string) => void;
+  pushDrill: (question: string, opts?: { pressure?: boolean }) => void;
   setToolHandler: (handler: RealtimeToolHandler | null) => void;
 }
 
@@ -145,8 +153,11 @@ export function useRealtime(): RealtimeHandle {
   }, [closeRealtime]);
 
   const pushDrill = useCallback(
-    (question: string) => {
+    (question: string, opts: { pressure?: boolean } = {}) => {
       if (!question) return;
+      const pressureClause = opts.pressure
+        ? "\n\nPRESSURE MODE: interrupt rambling after ~10 seconds. If the user stalls, snap 'Default answer now.' Be sharper, shorter, more critical than usual. Force at least one pressure follow-up regardless of answer quality."
+        : "";
       send({
         type: "conversation.item.create",
         item: {
@@ -157,7 +168,8 @@ export function useRealtime(): RealtimeHandle {
               type: "input_text",
               text:
                 "Ask me this drill aloud, exactly once, then wait for my spoken answer:\n" +
-                question.trim(),
+                question.trim() +
+                pressureClause,
             },
           ],
         },
@@ -166,14 +178,18 @@ export function useRealtime(): RealtimeHandle {
         type: "response.create",
         response: {
           instructions:
-            "Ask the current drill question above in one breath, then stop and wait for the user's answer. Do not give hints.",
+            "Ask the current drill question above in one breath, then stop and wait for the user's answer. Do not give hints. After grading the answer, immediately call get_next_drill and ask the new question — do not wait for me." +
+            pressureClause,
         },
       });
     },
     [send],
   );
 
-  const start = useCallback(async (initialDrill?: string) => {
+  const start = useCallback(async (
+    initialDrill?: string,
+    opts: { pressure?: boolean } = {},
+  ) => {
     setError(null);
     setTranscript("");
     transcriptItemsRef.current.clear();
@@ -236,7 +252,7 @@ export function useRealtime(): RealtimeHandle {
         setStatus("connected");
         recordDebugStatus("connected");
         if (initialDrill) {
-          pushDrill(initialDrill);
+          pushDrill(initialDrill, opts);
         } else {
           send({
             type: "response.create",
@@ -455,6 +471,22 @@ async function runToolCall(
       output: JSON.stringify(output),
     },
   });
+
+  // After grading, nudge the agent to keep the drill loop going (LOCAL.md
+  // §18 — backend owns curriculum, agent drives it). If the Playground
+  // prompt already says "call get_next_drill after grading", this nudge is
+  // additive; if it doesn't, this keeps the loop running.
+  if (call.name === "grade_attempt" && !output.error) {
+    send({
+      type: "response.create",
+      response: {
+        instructions:
+          "Now call get_next_drill to fetch the next drill, then ask its question_text verbatim. Do not wait for the user to ask.",
+      },
+    });
+    return;
+  }
+
   send({ type: "response.create" });
 }
 

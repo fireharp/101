@@ -458,6 +458,41 @@ apiRouter.delete("/drills/:id", (req: Request, res: Response) => {
 });
 
 /* ------------------------------------------------------------------ */
+/* PATCH /api/drills/:id                                              */
+/* Inline rubric editor (LOCAL.md §13 admin). Allows updating         */
+/* question_text, rubric, canonical answers, difficulty, trap_type,   */
+/* tags. is_active is intentionally NOT editable here — use the       */
+/* activate/delete endpoints.                                         */
+/* ------------------------------------------------------------------ */
+const rubricPatchSchema = z.object({
+  // must_have is the heart of the rubric — at least one item required.
+  must_have: z.array(z.string().min(1)).min(1),
+  nice_to_have: z.array(z.string()),
+  red_flags: z.array(z.string()),
+});
+const drillPatchSchema = z.object({
+  question_text: z.string().min(10).optional(),
+  canonical_short_answer: z.string().min(10).optional(),
+  canonical_deep_answer: z.string().nullable().optional(),
+  difficulty: z.number().int().min(1).max(5).optional(),
+  trap_type: z.string().nullable().optional(),
+  rubric: rubricPatchSchema.optional(),
+  tags: z.array(z.string()).optional(),
+});
+
+apiRouter.patch("/drills/:id", (req: Request, res: Response) => {
+  const id = String(req.params.id ?? "");
+  if (!id) return res.status(400).json({ error: "missing id" });
+  const parsed = drillPatchSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.message });
+  }
+  const updated = drills.patch(id, parsed.data);
+  if (!updated) return res.status(404).json({ error: "drill not found" });
+  res.json({ ok: true, drill: updated });
+});
+
+/* ------------------------------------------------------------------ */
 /* POST /api/drills/:id/test-grade                                    */
 /* Runs the grading engine against a sample transcript WITHOUT        */
 /* persisting an attempt or updating skill state. For rubric tuning   */

@@ -630,7 +630,10 @@ export type EventType =
   | "draft_deactivated"
   | "draft_discarded"
   | "drill_imported"
+  | "rubric_edited"
   | "session_ended";
+
+export const ADMIN_AUDIT_SESSION_ID = "__admin__";
 
 export interface SessionEvent {
   id: number;
@@ -694,6 +697,37 @@ export const events = {
         )
         .get(sessionId) as { c: number }
     ).c;
+  },
+
+  /**
+   * Admin actions (drill imports, draft activate / deactivate / discard,
+   * rubric edits) are written under sentinel session_id `__admin__` so they
+   * stay out of per-session timelines but remain queryable as an admin audit
+   * log (LOCAL.md §13).
+   */
+  listAdmin(limit = 100): SessionEvent[] {
+    const rows = db
+      .prepare(
+        `SELECT id, session_id, event_type, payload, created_at
+           FROM session_events
+           WHERE session_id = ?
+           ORDER BY id DESC
+           LIMIT ?`,
+      )
+      .all(ADMIN_AUDIT_SESSION_ID, limit) as {
+      id: number;
+      session_id: string;
+      event_type: string;
+      payload: string | null;
+      created_at: string;
+    }[];
+    return rows.map((r) => ({
+      id: r.id,
+      session_id: r.session_id,
+      event_type: r.event_type as EventType,
+      payload: r.payload ? JSON.parse(r.payload) : null,
+      created_at: r.created_at,
+    }));
   },
 };
 

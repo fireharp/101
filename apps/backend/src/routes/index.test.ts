@@ -308,6 +308,169 @@ test("tool-call dispatch: get_next_drill rejects wrong user", async () => {
   assert.ok(ok.json.result.drill_id, "should return a drill_id");
 });
 
+test("tool-call dispatch: save_generated_cards persists valid cards, drops malformed", async () => {
+  const sess = await http<{ session: { id: string } }>(
+    "POST",
+    "/api/drill-sessions",
+    {},
+  );
+  const sid = sess.json.session.id;
+
+  const result = await http<{ result: { saved?: number } }>(
+    "POST",
+    "/api/realtime/tool-call",
+    {
+      session_id: sid,
+      name: "save_generated_cards",
+      arguments: {
+        cards: [
+          { front: "What is the formula for must_have_coverage weight?", back: "0.65" },
+          { front: "WAL stands for?", back: "write-ahead log", drill_id: "fx_db_001" },
+          { front: "missing back" }, // invalid
+          "stray string", // invalid
+          null, // invalid
+          { front: 42, back: "back-is-string-but-front-is-not" }, // invalid
+        ],
+      },
+    },
+  );
+  assert.equal(result.status, 200);
+  assert.equal(
+    result.json.result.saved,
+    2,
+    "only the two well-formed card objects should be persisted",
+  );
+});
+
+test("tool-call dispatch: get_user_skill_summary reflects graded attempts", async () => {
+  const userId = `skill-summary-${randomUUID().slice(0, 8)}`;
+  const userHeaders = {
+    "content-type": "application/json",
+    "x-user-id": userId,
+  };
+  const post = (pathname: string, body: unknown) =>
+    fetch(`${base}${pathname}`, {
+      method: "POST",
+      headers: userHeaders,
+      body: JSON.stringify(body),
+    });
+
+  const sessRes = await post("/api/drill-sessions", {});
+  const sess = (await sessRes.json()) as { session: { id: string } };
+  const sid = sess.session.id;
+
+  // Full tool-call round: pick → submit → grade.
+  const nextRes = await post("/api/realtime/tool-call", {
+    session_id: sid,
+    name: "get_next_drill",
+    arguments: {},
+  });
+  const nextBody = (await nextRes.json()) as {
+    result: { attempt_id: string; topic: string };
+  };
+  const attemptId = nextBody.result.attempt_id;
+  const drillTopic = nextBody.result.topic;
+  assert.ok(attemptId, "expected get_next_drill to seed an attempt");
+
+  await post("/api/realtime/tool-call", {
+    session_id: sid,
+    name: "submit_answer_transcript",
+    arguments: {
+      attempt_id: attemptId,
+      transcript: "I really don't know",
+      duration_seconds: 5,
+    },
+  });
+  await post("/api/realtime/tool-call", {
+    session_id: sid,
+    name: "grade_attempt",
+    arguments: { attempt_id: attemptId },
+  });
+
+  const summaryRes = await post("/api/realtime/tool-call", {
+    session_id: sid,
+    name: "get_user_skill_summary",
+    arguments: {},
+  });
+  const summary = (await summaryRes.json()) as {
+    result: {
+      weakest: Array<{ topic: string; weakness_score: number; exposure_count: number }>;
+    };
+  };
+  assert.equal(summaryRes.status, 200);
+  assert.ok(
+    summary.result.weakest.length >= 1,
+    "weakest list should have at least one entry after a graded attempt",
+  );
+  const topics = summary.result.weakest.map((w) => w.topic);
+  assert.ok(
+    topics.includes(drillTopic),
+    `weakest list should include the just-graded topic ${drillTopic} (got ${topics.join(",")})`,
+  );
+  const entry = summary.result.weakest.find((w) => w.topic === drillTopic)!;
+  assert.ok(entry.exposure_count >= 1);
+  assert.ok(entry.weakness_score >= 0 && entry.weakness_score <= 1);
+});
+
+test("PATCH /api/drills/:id audits the rubric edit and shows up in /api/admin/events", async () => {
+  const before = await http<{ events: Array<{ event_type: string; payload: unknown }> }>(
+    "GET",
+    "/api/admin/events?limit=500",
+  );
+  const beforeCount = before.json.events.length;
+
+  const patched = await http<{ ok: boolean; drill: { id: string; rubric: { must_have: string[] } } }>(
+    "PATCH",
+    "/api/drills/fx_db_001",
+    {
+      rubric: {
+        must_have: ["composite B-tree", "category_id before price", "selectivity"],
+        nice_to_have: ["EXPLAIN ANALYZE", "covering index"],
+        red_flags: ["index every column"],
+      },
+    },
+  );
+  assert.equal(patched.status, 200);
+  assert.equal(patched.json.ok, true);
+  assert.ok(patched.json.drill.rubric.must_have.includes("selectivity"));
+
+  const after = await http<{
+    events: Array<{
+      event_type: string;
+      session_id: string;
+      payload: { drill_id?: string; fields_changed?: string[] } | null;
+    }>;
+  }>("GET", "/api/admin/events?limit=500");
+  assert.ok(
+    after.json.events.length > beforeCount,
+    "admin event count should grow after PATCH",
+  );
+  const audit = after.json.events.find(
+    (e) =>
+      e.event_type === "rubric_edited" &&
+      e.payload?.drill_id === "fx_db_001",
+  );
+  assert.ok(audit, "expected a rubric_edited event for fx_db_001");
+  assert.equal(audit.session_id, "__admin__");
+  assert.ok(
+    audit.payload?.fields_changed?.includes("rubric"),
+    "audit payload should record which fields changed",
+  );
+});
+
+test("GET /api/admin/events clamps the limit param into [1, 500]", async () => {
+  const tiny = await http<{ events: unknown[] }>("GET", "/api/admin/events?limit=1");
+  assert.equal(tiny.status, 200);
+  assert.ok(tiny.json.events.length <= 1);
+
+  const garbage = await http<{ events: unknown[] }>(
+    "GET",
+    "/api/admin/events?limit=not-a-number",
+  );
+  assert.equal(garbage.status, 200);
+  assert.ok(Array.isArray(garbage.json.events));
+});
+
 test("GET /api/drills/export.yaml round-trips active drills (LOCAL.md §16 seed format)", async () => {
   const YAML = (await import("yaml")).default;
 

@@ -5,6 +5,7 @@ import { z } from "zod";
 import YAML from "yaml";
 import { importDrillsFromYaml } from "../db/seed.js";
 import {
+  ADMIN_AUDIT_SESSION_ID,
   attempts,
   cards,
   drills,
@@ -810,7 +811,7 @@ apiRouter.post("/drills/import", (req: Request, res: Response) => {
       .json({ error: "send YAML body or JSON { yaml: '...' }" });
   }
   const result = importDrillsFromYaml(yamlText);
-  events.log("__admin__", "drill_imported", {
+  events.log(ADMIN_AUDIT_SESSION_ID, "drill_imported", {
     imported: result.imported,
     skipped: result.skipped.length,
   });
@@ -861,7 +862,7 @@ apiRouter.post("/drills/:id/activate", (req: Request, res: Response) => {
   const ok = drills.setActive(id, true);
   if (!ok) return res.status(404).json({ error: "drill not found" });
   const drill = drills.get(id);
-  events.log("__admin__", "draft_activated", { drill_id: id });
+  events.log(ADMIN_AUDIT_SESSION_ID, "draft_activated", { drill_id: id });
   res.json({ ok: true, drill });
 });
 
@@ -877,7 +878,7 @@ apiRouter.post("/drills/:id/deactivate", (req: Request, res: Response) => {
   const ok = drills.setActive(id, false);
   if (!ok) return res.status(404).json({ error: "drill not found" });
   const drill = drills.get(id);
-  events.log("__admin__", "draft_deactivated", { drill_id: id });
+  events.log(ADMIN_AUDIT_SESSION_ID, "draft_deactivated", { drill_id: id });
   res.json({ ok: true, drill });
 });
 
@@ -896,7 +897,7 @@ apiRouter.delete("/drills/:id", (req: Request, res: Response) => {
     });
   }
   const ok = drills.remove(id, true);
-  if (ok) events.log("__admin__", "draft_discarded", { drill_id: id });
+  if (ok) events.log(ADMIN_AUDIT_SESSION_ID, "draft_discarded", { drill_id: id });
   res.json({ ok });
 });
 
@@ -932,7 +933,25 @@ apiRouter.patch("/drills/:id", (req: Request, res: Response) => {
   }
   const updated = drills.patch(id, parsed.data);
   if (!updated) return res.status(404).json({ error: "drill not found" });
+  events.log(ADMIN_AUDIT_SESSION_ID, "rubric_edited", {
+    drill_id: id,
+    fields_changed: Object.keys(parsed.data),
+  });
   res.json({ ok: true, drill: updated });
+});
+
+/* ------------------------------------------------------------------ */
+/* GET /api/admin/events                                              */
+/* Surfaces the admin-only audit trail (drill imports, draft state    */
+/* changes, rubric edits). Backs the LOCAL.md §13 admin loop so       */
+/* changes to the drill bank are reviewable.                          */
+/* ------------------------------------------------------------------ */
+apiRouter.get("/admin/events", (req: Request, res: Response) => {
+  const limitRaw = Number(req.query.limit ?? 100);
+  const limit = Number.isFinite(limitRaw)
+    ? Math.max(1, Math.min(500, Math.floor(limitRaw)))
+    : 100;
+  res.json({ events: events.listAdmin(limit) });
 });
 
 /* ------------------------------------------------------------------ */

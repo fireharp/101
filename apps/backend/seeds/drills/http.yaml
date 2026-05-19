@@ -1,0 +1,81 @@
+- id: http_idempotency_put_post_001
+  topic: http
+  subtopic: semantics
+  difficulty: 2
+  trap_type: idempotency_confusion
+  question_text: >
+    Explain the difference between PUT, POST, and PATCH in terms of
+    idempotency. When would you choose each for a resource update?
+  expected_answer:
+    must_have:
+      - PUT is idempotent (full replace)
+      - POST is not idempotent (create)
+      - PATCH is partial update, not strictly idempotent by spec
+      - same request twice → same end state for PUT
+    nice_to_have:
+      - PATCH JSON merge vs JSON patch
+      - PUT for known id, POST for new resource
+    red_flags:
+      - "POST is always wrong for updates"
+      - PATCH is always idempotent
+  rubric:
+    must_have:
+      - define idempotency
+      - PUT vs POST contract
+      - PATCH partial
+    nice_to_have:
+      - merge vs patch
+      - resource semantics
+    red_flags:
+      - claim PATCH always idempotent
+      - confuse POST and PUT
+  canonical_short_answer: >
+    PUT is idempotent — sending it twice leaves the resource in the same
+    state. POST is not — twice creates two resources. PATCH does a partial
+    update and isn't strictly idempotent in the spec, though many APIs make
+    it so. Use PUT to replace at a known id, POST to create when the server
+    assigns the id, PATCH for partial field updates.
+  canonical_deep_answer: null
+  tags: [http, rest, api]
+  is_active: true
+
+- id: http_status_codes_001
+  topic: http
+  subtopic: status_codes
+  difficulty: 2
+  trap_type: 200_for_everything
+  question_text: >
+    A teammate's API returns 200 OK with `{"error": "not found"}` in the
+    body for missing resources. Why is this wrong and what should they do?
+  expected_answer:
+    must_have:
+      - status codes are part of the contract
+      - clients use them for retry / cache / monitoring decisions
+      - 404 for missing
+      - 400 / 422 for validation errors
+    nice_to_have:
+      - 5xx vs 4xx distinction
+      - RFC 7807 problem details
+    red_flags:
+      - "200 with error body is fine"
+      - "use 500 for everything"
+  rubric:
+    must_have:
+      - 4xx vs 5xx
+      - status drives behaviour
+      - correct codes named
+    nice_to_have:
+      - problem+json
+      - retry semantics
+    red_flags:
+      - 200 for errors
+      - mix 4xx and 5xx
+  canonical_short_answer: >
+    HTTP status codes are part of the API contract — middleware, caches,
+    monitoring, and retry logic all read them. Returning 200 with an error
+    body breaks all of that. Use 404 for not-found, 400 or 422 for client
+    validation errors, 401/403 for auth, 5xx only for server faults. RFC
+    7807 problem+json is a good error body format.
+  canonical_deep_answer: null
+  tags: [http, rest, api]
+  is_active: true

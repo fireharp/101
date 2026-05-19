@@ -80,7 +80,9 @@ export function App() {
   const [ending, setEnding] = useState(false);
   const [drillCount, setDrillCount] = useState(0);
   const [pressureMode, setPressureMode] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const MOCK_TARGET = 7;
+  const SESSION_STORAGE_KEY = "drillCoachSession";
   const [drafts, setDrafts] = useState<
     | {
         id: string;
@@ -139,6 +141,19 @@ export function App() {
     }
   }, [drill, pressureMode, realtime.pushDrill, realtime.status]);
 
+  // Keep the resume bookmark fresh when mode or pressure toggle mid-session.
+  useEffect(() => {
+    if (!session) return;
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        session_id: session.id,
+        mode,
+        pressure_mode: pressureMode,
+      }),
+    );
+  }, [mode, pressureMode, session]);
+
   useEffect(() => {
     api
       .health()
@@ -149,6 +164,82 @@ export function App() {
         }),
       )
       .catch((e) => setError((e as Error).message));
+  }, []);
+
+  // Persist session bookmark in localStorage so a refresh resumes where
+  // the user left off. The backend already has all the durable state
+  // (attempts, weakness, cards); we just need the session id + mode.
+  useEffect(() => {
+    let cancelled = false;
+    const raw =
+      typeof window !== "undefined"
+        ? window.localStorage.getItem(SESSION_STORAGE_KEY)
+        : null;
+    if (!raw) return;
+    let parsed: { session_id?: string; mode?: Mode; pressure_mode?: boolean };
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      window.localStorage.removeItem(SESSION_STORAGE_KEY);
+      return;
+    }
+    if (!parsed.session_id) return;
+    setResuming(true);
+    void (async () => {
+      try {
+        const sum = await api.sessionSummary(parsed.session_id!);
+        if (cancelled) return;
+        if (sum.ended_at) {
+          window.localStorage.removeItem(SESSION_STORAGE_KEY);
+          return;
+        }
+        setSession({
+          id: sum.session_id,
+          user_id: "demo-user",
+          mode: sum.mode,
+        });
+        setMode(sum.mode);
+        if (parsed.pressure_mode) setPressureMode(true);
+        const openAttempt = sum.attempts
+          .slice()
+          .reverse()
+          .find((a) => a.score === null);
+        if (openAttempt) {
+          const bank = await api.drills();
+          if (cancelled) return;
+          const item = bank.drills.find((d) => d.id === openAttempt.drill_id);
+          if (item) {
+            setDrill({
+              drill_id: item.id,
+              attempt_id: openAttempt.attempt_id,
+              question_text: item.question_text,
+              topic: item.topic,
+              subtopic: item.subtopic,
+              difficulty: item.difficulty,
+              expected_answer_shape: item.rubric.must_have,
+              rubric: item.rubric,
+            });
+            setDrillCount(sum.drills_attempted);
+            return;
+          }
+        }
+        // No open attempt to resume, so create the next pending attempt.
+        const d = await api.nextDrill(sum.session_id, sum.mode);
+        if (cancelled) return;
+        setDrill(d);
+        setDrillCount(sum.drills_attempted + 1);
+        startedAtRef.current = Date.now();
+        setElapsed(0);
+      } catch {
+        window.localStorage.removeItem(SESSION_STORAGE_KEY);
+      } finally {
+        if (!cancelled) setResuming(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const startTimer = useCallback(() => {
@@ -248,6 +339,14 @@ export function App() {
     try {
       const s = await api.startSession(mode);
       setSession(s);
+      window.localStorage.setItem(
+        SESSION_STORAGE_KEY,
+        JSON.stringify({
+          session_id: s.id,
+          mode,
+          pressure_mode: pressureMode,
+        }),
+      );
       const d = await api.nextDrill(s.id, mode);
       setDrill(d);
       setDrillCount(1);
@@ -255,7 +354,7 @@ export function App() {
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [mode, startTimer]);
+  }, [mode, pressureMode, startTimer]);
 
   const onNext = useCallback(async () => {
     if (!session) return;
@@ -339,6 +438,7 @@ export function App() {
     setGrade(null);
     setTranscript("");
     setDrillCount(0);
+    window.localStorage.removeItem(SESSION_STORAGE_KEY);
   }, [stopTimer]);
 
   const refreshDrafts = useCallback(async () => {
@@ -640,7 +740,13 @@ export function App() {
       <section className="panel">
         <h2>Drill</h2>
 
-        {!drill && (
+        {resuming && !drill && (
+          <p className="muted" data-testid="resume-status">
+            Resuming previous session...
+          </p>
+        )}
+
+        {!drill && !resuming && (
           <>
             <p className="muted">
               Pick a mode and start. The backend's rotation engine selects the

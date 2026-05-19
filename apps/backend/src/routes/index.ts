@@ -440,6 +440,21 @@ apiRouter.post("/drills/:id/activate", (req: Request, res: Response) => {
 });
 
 /* ------------------------------------------------------------------ */
+/* POST /api/drills/:id/deactivate                                    */
+/* Pulls a drill out of the rotation pool (is_active=false). Mirror   */
+/* of activate so the admin loop is symmetric: active ↔ draft, then   */
+/* DELETE if the user wants it gone for good.                         */
+/* ------------------------------------------------------------------ */
+apiRouter.post("/drills/:id/deactivate", (req: Request, res: Response) => {
+  const id = String(req.params.id ?? "");
+  if (!id) return res.status(400).json({ error: "missing id" });
+  const ok = drills.setActive(id, false);
+  if (!ok) return res.status(404).json({ error: "drill not found" });
+  const drill = drills.get(id);
+  res.json({ ok: true, drill });
+});
+
+/* ------------------------------------------------------------------ */
 /* DELETE /api/drills/:id                                             */
 /* Only allowed on inactive drafts to prevent destroying live data.   */
 /* ------------------------------------------------------------------ */

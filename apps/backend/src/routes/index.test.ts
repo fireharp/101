@@ -210,7 +210,7 @@ test("/api/drills/drafts lists inactive drills only", async () => {
   }
 });
 
-test("draft activation flow: list → activate → appears in active → delete is now blocked", async () => {
+test("draft activation flow: list → activate → appears in active → delete is now blocked → deactivate → delete succeeds", async () => {
   // 1. Activate
   const act = await http("POST", "/api/drills/fx_draft_001/activate");
   assert.equal(act.status, 200);
@@ -225,6 +225,32 @@ test("draft activation flow: list → activate → appears in active → delete 
     headers,
   });
   assert.equal(del.status, 409);
+
+  // 4. Deactivate flips it back to a draft.
+  const deact = await http("POST", "/api/drills/fx_draft_001/deactivate");
+  assert.equal(deact.status, 200);
+  const drafts = await http<{ drills: { id: string }[] }>(
+    "GET",
+    "/api/drills/drafts",
+  );
+  assert.ok(
+    drafts.json.drills.some((d) => d.id === "fx_draft_001"),
+    "deactivated drill should show in drafts list",
+  );
+
+  // 5. Now delete succeeds.
+  const delOk = await fetch(`${base}/api/drills/fx_draft_001`, {
+    method: "DELETE",
+    headers,
+  });
+  assert.equal(delOk.status, 200);
+
+  // 6. Subsequent fetch is 404.
+  const gone = await fetch(`${base}/api/drills/fx_draft_001/deactivate`, {
+    method: "POST",
+    headers,
+  });
+  assert.equal(gone.status, 404);
 });
 
 test("test-grade dry-runs without persisting an attempt", async () => {

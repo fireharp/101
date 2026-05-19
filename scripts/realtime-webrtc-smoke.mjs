@@ -90,26 +90,89 @@ async function main() {
     // ends — these typically arrive in the seconds after
     // `input_audio_buffer.speech_stopped`.
     //
-    // Three assertion levels:
+    // Four assertion levels:
     //   REALTIME_SMOKE_REQUIRE_TOOL=1 (default)  → at least 1 tool call
     //   REALTIME_SMOKE_REQUIRE_MULTI_TURN=1      → at least 2 distinct
     //     tool names (proves the agent grades after the user answered)
     //   REALTIME_SMOKE_REQUIRE_LOOP=1            → at least 3 total tool
     //     calls AND get_next_drill is one of them (proves the infinite
     //     drill loop: ask → grade → ask again)
-    const requireLoop = process.env.REALTIME_SMOKE_REQUIRE_LOOP === "1";
+    //   REALTIME_SMOKE_REQUIRE_END=1             → after first grade,
+    //     inject a faux-user "Stop. End session." message and assert
+    //     end_session_summary tool call appears (proves LOCAL.md §6
+    //     end_session_summary path).
+    const requireEnd = process.env.REALTIME_SMOKE_REQUIRE_END === "1";
+    const requireLoop =
+      !requireEnd && process.env.REALTIME_SMOKE_REQUIRE_LOOP === "1";
     const requireMultiTurn =
       requireLoop || process.env.REALTIME_SMOKE_REQUIRE_MULTI_TURN === "1";
-    const defaultWait = requireLoop ? 120000 : requireMultiTurn ? 90000 : 20000;
+    const defaultWait = requireEnd
+      ? 120000
+      : requireLoop
+        ? 120000
+        : requireMultiTurn
+          ? 90000
+          : 20000;
     const toolWaitMs = Number(
       process.env.REALTIME_SMOKE_TOOL_WAIT_MS ?? defaultWait,
     );
     const requireToolCall = process.env.REALTIME_SMOKE_REQUIRE_TOOL !== "0";
+
+    // For REQUIRE_END mode: as soon as we see grade_attempt complete,
+    // inject a "stop session" user message and require
+    // end_session_summary to follow. This proves the LOCAL.md §6 stop
+    // path without needing a special audio recording.
+    if (requireEnd) {
+      // Suppress the "Next drill, please" auto-backstop so it doesn't
+      // race with our "Stop. End session." message.
+      await page.evaluate(() => {
+        window.__drillSuppressAutoNextDrill = true;
+      });
+      void page
+        .waitForFunction(
+          () => {
+            const events = window.__drillRealtimeDebug?.events ?? [];
+            return events.some(
+              (e) =>
+                e.type === "tool_call.handled" && e.state === "grade_attempt",
+            );
+          },
+          undefined,
+          { timeout: 90000 },
+        )
+        .then(async () => {
+          await page.evaluate(() => {
+            const send = window.__drillRealtimeSend;
+            if (!send) return;
+            send({
+              type: "conversation.item.create",
+              item: {
+                type: "message",
+                role: "user",
+                content: [
+                  {
+                    type: "input_text",
+                    text: "Stop. End session now and call end_session_summary.",
+                  },
+                ],
+              },
+            });
+            send({ type: "response.create" });
+          });
+        })
+        .catch(() => {
+          /* timeout to find grade — smoke will fail below */
+        });
+    }
+
     const toolWaitErr = await page
       .waitForFunction(
-        ({ multi, loop }) => {
+        ({ multi, loop, end }) => {
           const events = window.__drillRealtimeDebug?.events ?? [];
           const handled = events.filter((e) => e.type === "tool_call.handled");
+          if (end) {
+            return handled.some((e) => e.state === "end_session_summary");
+          }
           if (!multi && !loop) return handled.length >= 1;
           const names = handled.map((e) => e.state).filter(Boolean);
           if (loop) {
@@ -117,23 +180,31 @@ async function main() {
           }
           return new Set(names).size >= 2;
         },
-        { multi: requireMultiTurn, loop: requireLoop },
+        {
+          multi: requireMultiTurn,
+          loop: requireLoop,
+          end: requireEnd,
+        },
         { timeout: toolWaitMs },
       )
       .then(() => null)
       .catch((err) => err);
     if (requireToolCall && toolWaitErr) {
-      const msg = requireLoop
-        ? "Agent never completed an autonomous drill loop within " +
+      const msg = requireEnd
+        ? "Agent never called end_session_summary within " +
           toolWaitMs +
-          "ms (need ≥ 3 total tool calls including get_next_drill). Set REALTIME_SMOKE_REQUIRE_LOOP=0 to relax."
-        : requireMultiTurn
-          ? "Agent never produced 2 distinct tool calls within " +
+          "ms after the 'stop' message. Set REALTIME_SMOKE_REQUIRE_END=0 to relax."
+        : requireLoop
+          ? "Agent never completed an autonomous drill loop within " +
             toolWaitMs +
-            "ms (no multi-turn drill loop). Set REALTIME_SMOKE_REQUIRE_MULTI_TURN=0 to relax."
-          : "Agent never called a backend tool within " +
-            toolWaitMs +
-            "ms; set REALTIME_SMOKE_REQUIRE_TOOL=0 to skip this assertion";
+            "ms (need ≥ 3 total tool calls including get_next_drill). Set REALTIME_SMOKE_REQUIRE_LOOP=0 to relax."
+          : requireMultiTurn
+            ? "Agent never produced 2 distinct tool calls within " +
+              toolWaitMs +
+              "ms (no multi-turn drill loop). Set REALTIME_SMOKE_REQUIRE_MULTI_TURN=0 to relax."
+            : "Agent never called a backend tool within " +
+              toolWaitMs +
+              "ms; set REALTIME_SMOKE_REQUIRE_TOOL=0 to skip this assertion";
       throw new Error(msg);
     }
 

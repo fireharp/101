@@ -79,6 +79,14 @@ type RealtimeDebug = {
 declare global {
   interface Window {
     __drillRealtimeDebug?: RealtimeDebug;
+    // Exposed for smoke tests so they can inject faux-user messages over
+    // the data channel (e.g. to assert the "stop" / end_session_summary
+    // path). Available only while the data channel is open.
+    __drillRealtimeSend?: (event: Record<string, unknown>) => void;
+    // Smoke flag: when set, the autonomy backstop in runToolCall stops
+    // injecting "Next drill, please" after each grade. Used by the
+    // end_session_summary smoke so the "Stop" message wins.
+    __drillSuppressAutoNextDrill?: boolean;
   }
 }
 
@@ -121,6 +129,17 @@ export function useRealtime(): RealtimeHandle {
     if (!dc || dc.readyState !== "open") return;
     dc.send(JSON.stringify(event));
   }, []);
+
+  // Expose `send` so smoke tests can inject faux user messages. This is a
+  // test hook (Playwright reads `window.__drillRealtimeSend`); it's safe
+  // to leave on in production because it requires an active data channel
+  // and the agent will reject malformed payloads.
+  useEffect(() => {
+    window.__drillRealtimeSend = send;
+    return () => {
+      delete window.__drillRealtimeSend;
+    };
+  }, [send]);
 
   const closeRealtime = useCallback(async () => {
     try {
@@ -472,18 +491,34 @@ async function runToolCall(
     },
   });
 
-  // After grading, nudge the agent to keep the drill loop going (LOCAL.md
-  // §18 — backend owns curriculum, agent drives it). If the Playground
-  // prompt already says "call get_next_drill after grading", this nudge is
-  // additive; if it doesn't, this keeps the loop running.
-  if (call.name === "grade_attempt" && !output.error) {
-    send({
-      type: "response.create",
-      response: {
-        instructions:
-          "Now call get_next_drill to fetch the next drill, then ask its question_text verbatim. Do not wait for the user to ask.",
-      },
-    });
+  // After grading, the agent often wants to speak the verdict and then stop.
+  // Inject a faux user message asking for the next drill, so the model picks
+  // back up and calls get_next_drill on the *next* response cycle. This is
+  // a belt-and-suspenders backstop on the Playground prompt (LOCAL.md §18 —
+  // backend owns curriculum, agent drives it).
+  if (
+    call.name === "grade_attempt" &&
+    !output.error &&
+    !window.__drillSuppressAutoNextDrill
+  ) {
+    send({ type: "response.create" });
+    setTimeout(() => {
+      send({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text:
+                "Next drill, please. Call get_next_drill and ask the new question.",
+            },
+          ],
+        },
+      });
+      send({ type: "response.create" });
+    }, 2500);
     return;
   }
 

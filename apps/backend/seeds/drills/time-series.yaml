@@ -1,0 +1,81 @@
+- id: ts_metric_cardinality_001
+  topic: time_series
+  subtopic: cardinality
+  difficulty: 3
+  trap_type: high_cardinality_label
+  question_text: >
+    Your Prometheus is OOMing. A junior engineer added a label `user_id` to
+    a counter. Why is this killing the system, and what's the fix?
+  expected_answer:
+    must_have:
+      - each label combination = new time series
+      - user_id has millions of values → millions of series
+      - memory cost is linear in series count
+      - don't put high-cardinality dimensions in labels
+    nice_to_have:
+      - use logs or traces for per-user
+      - histogram / summary alternatives
+    red_flags:
+      - "just give Prometheus more memory"
+      - "labels are free"
+  rubric:
+    must_have:
+      - cardinality explosion
+      - series count cost
+      - remove the high-card label
+    nice_to_have:
+      - logs/traces for per-entity
+      - histogram patterns
+    red_flags:
+      - scale vertically as fix
+      - claim no cost
+  canonical_short_answer: >
+    Each unique label combination becomes its own time series in Prometheus.
+    user_id with millions of values means millions of series, and memory
+    scales with series count. Drop the high-cardinality label, aggregate
+    instead, and route per-user observability to logs or traces. Use
+    histograms for distribution rather than per-entity counters.
+  canonical_deep_answer: null
+  tags: [prometheus, metrics, observability]
+  is_active: true
+
+- id: ts_downsampling_001
+  topic: time_series
+  subtopic: retention
+  difficulty: 3
+  trap_type: retain_everything
+  question_text: >
+    Your metrics store keeps 1 year of raw 10-second data and is running
+    out of disk fast. How would you redesign retention?
+  expected_answer:
+    must_have:
+      - downsample older data (10s → 1m → 5m → 1h)
+      - tiered retention (high-res recent, low-res long-term)
+      - keep aggregates not raw
+      - storage cost vs query granularity tradeoff
+    nice_to_have:
+      - Thanos / Mimir / VictoriaMetrics downsampling
+      - cold storage for archive
+    red_flags:
+      - "compress harder, keep everything raw"
+      - "buy more disk forever"
+  rubric:
+    must_have:
+      - downsample older
+      - tiered retention
+      - tradeoff explained
+    nice_to_have:
+      - specific tool named
+      - cold archive
+    red_flags:
+      - blanket retention extension
+      - no aggregation
+  canonical_short_answer: >
+    Tier retention by resolution: keep raw 10s for ~30 days, downsample to
+    1-minute for 90 days, 5-minute for 6 months, 1-hour for the rest of
+    the year. Long-term you only need aggregates for trend analysis — high
+    granularity is for incident debugging. Thanos / Mimir / VictoriaMetrics
+    do this natively.
+  canonical_deep_answer: null
+  tags: [metrics, retention, storage]
+  is_active: true

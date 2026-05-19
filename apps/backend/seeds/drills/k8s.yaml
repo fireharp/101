@@ -1,0 +1,83 @@
+- id: k8s_oom_killed_001
+  topic: kubernetes
+  subtopic: resources
+  difficulty: 3
+  trap_type: missing_limits
+  question_text: >
+    A pod keeps getting OOMKilled in production. What questions do you ask
+    before changing anything?
+  expected_answer:
+    must_have:
+      - check actual memory usage trend
+      - is it the workload or the limit
+      - request vs limit gap
+      - check for memory leak vs spike
+    nice_to_have:
+      - JVM heap inside container caveat
+      - VPA / right-sizing
+    red_flags:
+      - "just raise the limit until it stops"
+      - "remove the limit"
+  rubric:
+    must_have:
+      - measure before changing
+      - request vs limit
+      - leak vs natural growth
+    nice_to_have:
+      - JVM heap awareness
+      - VPA
+    red_flags:
+      - infinite limit raise
+      - no limit at all
+  canonical_short_answer: >
+    Don't just raise the limit. Pull the actual memory usage over time —
+    if it grows monotonically, it's a leak that more memory will only
+    delay. If it spikes, find the spike source. Check request vs limit
+    sizing. For JVM apps, verify the heap is tuned for the container's
+    cgroup limit. Raise limit only after you understand the cause.
+  canonical_deep_answer: null
+  tags: [kubernetes, memory, oom]
+  is_active: true
+
+- id: k8s_probe_misuse_001
+  topic: kubernetes
+  subtopic: probes
+  difficulty: 3
+  trap_type: liveness_too_aggressive
+  question_text: >
+    Pods are restarting in a loop. Liveness probe hits /health, which the
+    app responds to in 200ms most of the time but 5 seconds under load.
+    Probe timeout is 1 second, period 5 seconds, 3 failures = restart.
+    What's wrong?
+  expected_answer:
+    must_have:
+      - liveness probe wrongly kills under load
+      - liveness should test "irrecoverable", not slow
+      - move slow-path checks to readiness instead
+      - tune timeout / period generously
+    nice_to_have:
+      - startup probe for cold starts
+      - separate liveness from readiness
+    red_flags:
+      - "lower the timeout further"
+      - "remove the probe"
+  rubric:
+    must_have:
+      - liveness misuse for load
+      - liveness vs readiness
+      - probe sizing
+    nice_to_have:
+      - startupProbe
+      - generous thresholds
+    red_flags:
+      - aggressive timeout
+      - delete probes
+  canonical_short_answer: >
+    Liveness probes should restart only when the app is truly stuck. A slow
+    response to /health under load isn't stuck — it's slow. The aggressive
+    timeout kills healthy pods at the worst time, making the load problem
+    worse. Move /health-style checks to readiness (LB drains the pod), keep
+    liveness for "irrecoverable", and add a startupProbe for cold starts.
+  canonical_deep_answer: null
+  tags: [kubernetes, probes, reliability]
+  is_active: true

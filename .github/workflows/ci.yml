@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Tests + offline smokes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # Force the offline grader and a missing OpenAI key so anything that
+      # requires Realtime/LLM grading gets skipped or fails fast.
+      OPENAI_API_KEY: ""
+      USE_OFFLINE_GRADER: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Force rebuild native modules (better-sqlite3)
+        run: pnpm rebuild -r better-sqlite3
+
+      - name: TypeScript build
+        run: pnpm -r build
+
+      - name: Backend tests (engine + route)
+        run: pnpm -r test
+
+      - name: REST drill-loop smoke (offline)
+        run: pnpm smoke:drill-loop
+
+      - name: Install Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Browser drill-loop smoke (offline)
+        env:
+          HEADLESS: "1"
+        run: pnpm smoke:browser
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-screenshots
+          path: /tmp/*.png
+          if-no-files-found: ignore
+          retention-days: 7

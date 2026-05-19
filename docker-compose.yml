@@ -1,0 +1,28 @@
+# Local Postgres for the LOCAL.md §17 swap. The MVP runtime uses SQLite by
+# default — this file exists for users who want to migrate per
+# docs/POSTGRES_MIGRATION.md.
+#
+# Bring up:  docker compose up -d postgres
+# Tear down: docker compose down -v
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: drill-coach-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: drill
+      POSTGRES_PASSWORD: drill
+      POSTGRES_DB: drill_coach
+    ports:
+      - "5433:5432"
+    volumes:
+      - drill-pg-data:/var/lib/postgresql/data
+      - ./apps/backend/migrations/postgres.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U drill -d drill_coach"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  drill-pg-data:

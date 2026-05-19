@@ -1,0 +1,81 @@
+- id: search_relevance_vs_filter_001
+  topic: search
+  subtopic: relevance
+  difficulty: 3
+  trap_type: filter_vs_query
+  question_text: >
+    Your Elasticsearch query for "blue dress under $50" returns slow and
+    irrelevant results. Walk me through what's wrong.
+  expected_answer:
+    must_have:
+      - filters (price) should be in filter context, not query
+      - filters are cacheable and don't score
+      - query context for "blue dress" text
+      - separate exact vs fuzzy semantics
+    nice_to_have:
+      - bool with must + filter
+      - score tuning with function_score / BM25
+    red_flags:
+      - "wrap everything in match queries"
+      - "score price"
+  rubric:
+    must_have:
+      - filter vs query context
+      - filter caching
+      - text vs structured fields
+    nice_to_have:
+      - boolean query structure
+      - relevance tuning
+    red_flags:
+      - all match queries
+      - ignore filter cache
+  canonical_short_answer: >
+    Structured constraints like price < 50 belong in the filter context —
+    they don't score, they get cached, and they're fast. The text "blue
+    dress" belongs in the query context where BM25 / relevance scoring
+    matters. Use a bool query with must (text) + filter (price range).
+    Misplacing filters into query scope kills both speed and relevance.
+  canonical_deep_answer: null
+  tags: [elasticsearch, search, performance]
+  is_active: true
+
+- id: search_reindex_zero_downtime_001
+  topic: search
+  subtopic: reindexing
+  difficulty: 4
+  trap_type: in_place_mapping
+  question_text: >
+    You need to change an Elasticsearch index mapping (field type change)
+    in production. Walk me through the zero-downtime path.
+  expected_answer:
+    must_have:
+      - mappings are mostly immutable
+      - create new index with new mapping
+      - reindex from old → new
+      - alias swap from old to new atomically
+    nice_to_have:
+      - dual-write during reindex
+      - update_by_query for additive changes
+    red_flags:
+      - "edit the mapping in place"
+      - "drop and recreate during business hours"
+  rubric:
+    must_have:
+      - new index
+      - reindex
+      - alias swap
+    nice_to_have:
+      - dual-write
+      - additive update_by_query
+    red_flags:
+      - in-place type change
+      - drop and recreate
+  canonical_short_answer: >
+    Elasticsearch field mappings are mostly immutable. Create a new index
+    with the desired mapping, reindex from old to new (optionally
+    dual-writing during the process), and atomically swap the alias from
+    old to new. Drop the old index after a soak period. Never edit the
+    mapping in place on a live index.
+  canonical_deep_answer: null
+  tags: [elasticsearch, search, migration]
+  is_active: true

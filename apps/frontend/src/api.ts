@@ -220,6 +220,12 @@ export const api = {
       body: "{}",
     }),
 
+  deactivateDrill: (id: string) =>
+    jsonFetch<{ ok: boolean }>(`/api/drills/${id}/deactivate`, {
+      method: "POST",
+      body: "{}",
+    }),
+
   deleteDrill: (id: string) =>
     jsonFetch<{ ok: boolean }>(`/api/drills/${id}`, {
       method: "DELETE",

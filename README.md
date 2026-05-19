@@ -7,6 +7,34 @@ The voice agent runs on OpenAI GPT Realtime over WebRTC. The backend owns the
 curriculum, rotation, attempts, grading, and weakness state — the model is the
 voice/interview surface, not the brain (LOCAL.md §18).
 
+## LOCAL.md spec coverage
+
+| LOCAL.md section | Status |
+| --- | --- |
+| §1 Goal · §2 Architecture | ✓ (SQLite swap for Postgres in MVP — schema is portable) |
+| §3 Realtime WebRTC (Option A ephemeral token) | ✓ |
+| §4 Session config (gpt-realtime-2, reasoning, voice, tools, prompt id) | ✓ |
+| §5 Core product flow | ✓ |
+| §6 Tool/function interface (`get_next_drill`, `submit_answer_transcript`, `grade_attempt`, `save_generated_cards`, `get_user_skill_summary`, `end_session_summary`) | ✓ all 6 wired + dispatched + smoke-verified |
+| §7 Data model | ✓ |
+| §8 Rotation engine | ✓ with separate `mock_interview` formula |
+| §9 Question generation (Layer 1 YAML, Layer 2 templates, Layer 3 LLM drafts + activation flow) | ✓ |
+| §10 Grading (rubric-first JSON, LLM + offline) | ✓ |
+| §11 Voice session behavior | ✓ |
+| §12 Backend endpoints | ✓ (see API table) |
+| §13 Frontend screens (MVP + admin: drill browse, rubric editor, test-grade) | ✓ |
+| §14 Prompt skeleton | ✓ (`seeds/realtime-prompt.md`) |
+| §15 MVP 1 (50–100 drills, rotation, transcripts, grading, history) | ✓ 55 active drills, 17 topics |
+| §15 MVP 2 (cards, weak dashboard, templates, Anki CSV, rubric editor) | ✓ |
+| §15 MVP 3 (spaced repetition, skill graph, mock interview, pressure mode, compare attempts) | ✓ |
+| §16 Seed format · §17 Engineering decisions · §18 Non-negotiable | ✓ (autonomy verified by `smoke:realtime:loop`) |
+
+**Explicitly out of MVP scope** per LOCAL.md §15: payments, mobile app, Anki
+sync, calendar scheduling, multi-user admin. Documented choice: SQLite
+instead of Postgres for MVP — schema is portable, migration file is the
+swap point. See [`docs/POSTGRES_MIGRATION.md`](docs/POSTGRES_MIGRATION.md)
+for the exact swap path (docker-compose.yml + `migrations/postgres.sql`).
+
 ## Layout
 
 ```
@@ -290,7 +318,7 @@ Three layers, fastest to slowest:
 | Browser drill loop | `pnpm smoke:browser` | exercises App.tsx in Chromium (no mic): Start → type answer → Submit → grade panel renders → Next drill → question changes. |
 | Realtime WebRTC | `pnpm smoke:realtime` | full voice path: launches Chromium with `--use-file-for-fake-audio-capture` against a Mumbli WAV, asserts the model connects, ASR transcript appears, and at least 1 backend tool gets dispatched. Requires `OPENAI_API_KEY`. |
 | Realtime multi-turn | `pnpm smoke:realtime:multi` | same harness, longer wait (~90 s), asserts **≥ 2 distinct** tool calls — proves the agent runs the actual drill loop (e.g. `submit_answer_transcript` then `grade_attempt`) rather than just calling `get_next_drill` once and stopping. |
-| Realtime loop | `pnpm smoke:realtime:loop` | longest wait (~120 s), asserts ≥3 handled tool calls including `get_next_drill` so the agent grades and autonomously asks the next drill. |
+| Realtime autonomy | `pnpm smoke:realtime:loop` | strictest — wait up to ~2 min, asserts **≥ 3 total tool calls including `get_next_drill`**. Proves the agent calls `submit_answer_transcript` → `grade_attempt` → `get_next_drill` autonomously. Verifies LOCAL.md §18 ("backend owns curriculum, model drives it"). |
 
 Run everything:
 

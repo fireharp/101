@@ -692,6 +692,77 @@ test("admin audit events carry actor (x-user-id) for every event type", async ()
   }
 });
 
+test("GET /api/admin/events filters by actor and excludes pre-attribution rows", async () => {
+  const ACTOR = `actor-filter-${randomUUID().slice(0, 6)}`;
+  const OTHER = `actor-other-${randomUUID().slice(0, 6)}`;
+  const draftA = `fx_actor_a_${randomUUID().slice(0, 6)}`;
+  const draftB = `fx_actor_b_${randomUUID().slice(0, 6)}`;
+  drills.upsert({ ...fixtures[2]!, id: draftA, is_active: false });
+  drills.upsert({ ...fixtures[2]!, id: draftB, is_active: false });
+
+  // Two distinct actors write to the audit log in interleaved order.
+  await fetch(`${base}/api/drills/${draftA}/activate`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-user-id": ACTOR },
+    body: "{}",
+  });
+  await fetch(`${base}/api/drills/${draftB}/activate`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-user-id": OTHER },
+    body: "{}",
+  });
+
+  const mine = await http<{
+    events: Array<{ event_type: string; payload: { actor?: string; drill_id?: string } | null }>;
+  }>("GET", `/api/admin/events?actor=${encodeURIComponent(ACTOR)}&limit=500`);
+  assert.equal(mine.status, 200);
+  assert.ok(
+    mine.json.events.length >= 1,
+    "should include the activation made under ACTOR",
+  );
+  for (const e of mine.json.events) {
+    assert.equal(
+      e.payload?.actor,
+      ACTOR,
+      `actor filter leaked a row from ${e.payload?.actor}`,
+    );
+  }
+  const drillIds = mine.json.events.map((e) => e.payload?.drill_id);
+  assert.ok(
+    drillIds.includes(draftA),
+    "ACTOR's draftA activate should appear",
+  );
+  assert.ok(
+    !drillIds.includes(draftB),
+    "OTHER's draftB activate must not leak through actor filter",
+  );
+
+  // Combine ?actor + ?type — should still only return ACTOR's rubric_edited.
+  await fetch(`${base}/api/drills/${draftA}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json", "x-user-id": ACTOR },
+    body: JSON.stringify({
+      rubric: {
+        must_have: ["actor-combined-filter"],
+        nice_to_have: [],
+        red_flags: [],
+      },
+    }),
+  });
+  const combined = await http<{
+    events: Array<{ event_type: string; payload: { actor?: string } | null }>;
+  }>(
+    "GET",
+    `/api/admin/events?actor=${encodeURIComponent(ACTOR)}&type=rubric_edited&limit=500`,
+  );
+  assert.equal(combined.status, 200);
+  assert.ok(combined.json.events.length >= 1);
+  for (const e of combined.json.events) {
+    assert.equal(e.event_type, "rubric_edited");
+    assert.equal(e.payload?.actor, ACTOR);
+  }
+});
+
 test("DELETE /api/drills/:id writes a draft_discarded admin audit event", async () => {
   const id = `fx_admin_discard_${randomUUID().slice(0, 8)}`;
   drills.upsert({ ...fixtures[2]!, id, is_active: false });

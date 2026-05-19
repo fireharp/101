@@ -107,7 +107,10 @@ back-and-forth" — backed up with visible UI affordances.
   scope (no schema change — payload is JSON). Supports `?type=` (CSV
   of admin event types, invalid types return 400 with the allow-list),
   `?since=` (ISO 8601, normalised via SQLite `datetime()` so the
-  comparison crosses the T-vs-space format gap), and `?limit=` (1–500).
+  comparison crosses the T-vs-space format gap), `?actor=` (exact
+  match on `payload.actor` via `json_extract`; pre-attribution rows
+  are correctly excluded since `json_extract` returns NULL), and
+  `?limit=` (1–500).
 - **Drill browse** — every loaded drill, topic filter, expandable
   rubric, "Edit rubric" inline form, "Test grade" dry-run widget.
 - **Drafts panel** — Layer-3 LLM-generated drills (`is_active=false`)

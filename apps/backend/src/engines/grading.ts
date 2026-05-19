@@ -1,4 +1,10 @@
-import type { DrillItem, GeneratedCard, GradingResult, Rubric } from "../types.js";
+import type {
+  DrillItem,
+  GeneratedCard,
+  GradingResult,
+  Rubric,
+  TokenUsage,
+} from "../types.js";
 import { config } from "../config.js";
 import { hasOpenAI, openai } from "../services/llm.js";
 
@@ -217,6 +223,7 @@ Be honest, not generous. Reward concise default answers; penalize rambling.`;
       parsed.ideal_short_answer ?? drill.canonical_short_answer,
     follow_up_drills: parsed.follow_up_drills ?? [],
     cards,
+    usage: usageFromChatCompletion(resp.usage, resp.id, resp.model),
     breakdown: {
       must_have_coverage: round3(
         clamp01(Number(parsed.breakdown?.must_have_coverage ?? 0)),
@@ -235,6 +242,47 @@ Be honest, not generous. Reward concise default answers; penalize rambling.`;
       ),
     },
   };
+}
+
+function usageFromChatCompletion(
+  raw: unknown,
+  responseId: string | null | undefined,
+  model: string | null | undefined,
+): TokenUsage | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const usage = raw as Record<string, unknown>;
+  const promptDetails = readRecord(usage.prompt_tokens_details);
+  const completionDetails = readRecord(usage.completion_tokens_details);
+  return {
+    model: model ?? null,
+    response_id: responseId ?? null,
+    input_tokens: readNumber(usage.prompt_tokens),
+    output_tokens: readNumber(usage.completion_tokens),
+    total_tokens: readNumber(usage.total_tokens),
+    input_text_tokens: Math.max(
+      0,
+      readNumber(usage.prompt_tokens) - readNumber(promptDetails.audio_tokens),
+    ),
+    input_audio_tokens: readNumber(promptDetails.audio_tokens),
+    cached_tokens: readNumber(promptDetails.cached_tokens),
+    output_text_tokens: Math.max(
+      0,
+      readNumber(usage.completion_tokens) -
+        readNumber(completionDetails.audio_tokens),
+    ),
+    output_audio_tokens: readNumber(completionDetails.audio_tokens),
+    estimated_cost_usd: null,
+    raw_usage: usage,
+  };
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function readNumber(value: unknown): number {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
 }
 
 function clamp01(n: number): number {

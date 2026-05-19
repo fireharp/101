@@ -51,7 +51,9 @@ export interface SessionSummary {
     score: number | null;
     verdict: string | null;
     duration_seconds: number | null;
+    usage?: UsageTotals;
   }[];
+  usage?: UsageTotals;
 }
 
 export interface SessionPayload {
@@ -84,6 +86,98 @@ export interface RealtimeToken {
   voice: string;
 }
 
+export type VadMode = "server_vad" | "semantic_vad";
+export type SemanticVadEagerness = "low" | "medium" | "high" | "auto";
+
+export interface RealtimeSettings {
+  voice_speed: number;
+  vad: {
+    mode: VadMode;
+    threshold: number;
+    prefix_padding_ms: number;
+    silence_duration_ms: number;
+    eagerness: SemanticVadEagerness;
+    interrupt_response: boolean;
+  };
+}
+
+export interface UsageTotals {
+  events: number;
+  model?: string | null;
+  response_id?: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  input_text_tokens: number;
+  input_audio_tokens: number;
+  cached_tokens: number;
+  output_text_tokens: number;
+  output_audio_tokens: number;
+  estimated_cost_usd: number | null;
+}
+
+export interface UsageSummary {
+  total: UsageTotals;
+  session: UsageTotals | null;
+  by_source: (UsageTotals & { source: string })[];
+  by_attempt: (UsageTotals & {
+    attempt_id: string;
+    drill_id: string | null;
+  })[];
+}
+
+export interface RealtimeUsageEvent {
+  source: "realtime_response" | "realtime_transcription";
+  model?: string | null;
+  response_id?: string | null;
+  usage: UsageTotals & { raw_usage?: Record<string, unknown> };
+}
+
+export type ApiErrorPayload = {
+  error?: string;
+  message?: string;
+  request_id?: string;
+  openai_request_id?: string | null;
+  openai_status?: number;
+  retryable?: boolean;
+  retry_after?: string | null;
+};
+
+export class ApiError extends Error {
+  status: number;
+  statusText: string;
+  path: string;
+  payload: ApiErrorPayload | null;
+  requestId: string | null;
+  openaiRequestId: string | null;
+  openaiStatus: number | null;
+  retryable: boolean;
+
+  constructor(opts: {
+    message: string;
+    status: number;
+    statusText: string;
+    path: string;
+    payload: ApiErrorPayload | null;
+    requestId: string | null;
+  }) {
+    super(opts.message);
+    this.name = "ApiError";
+    this.status = opts.status;
+    this.statusText = opts.statusText;
+    this.path = opts.path;
+    this.payload = opts.payload;
+    this.requestId = opts.requestId ?? opts.payload?.request_id ?? null;
+    this.openaiRequestId = opts.payload?.openai_request_id ?? null;
+    this.openaiStatus = opts.payload?.openai_status ?? null;
+    this.retryable = opts.payload?.retryable ?? false;
+  }
+}
+
+export function isApiError(err: unknown): err is ApiError {
+  return err instanceof ApiError;
+}
+
 async function jsonFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -92,11 +186,29 @@ async function jsonFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...(init.headers ?? {}),
     },
   });
+  const text = await res.text();
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${res.statusText}: ${text || path}`);
+    const payload = parseErrorPayload(text);
+    const message = payload?.message ?? payload?.error ?? (text || path);
+    throw new ApiError({
+      message: `${res.status} ${res.statusText}: ${message}`,
+      status: res.status,
+      statusText: res.statusText,
+      path,
+      payload,
+      requestId: res.headers.get("x-request-id"),
+    });
   }
-  return (await res.json()) as T;
+  return (text ? JSON.parse(text) : {}) as T;
+}
+
+function parseErrorPayload(text: string): ApiErrorPayload | null {
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text) as ApiErrorPayload;
+  } catch {
+    return { error: text };
+  }
 }
 
 export const api = {
@@ -145,11 +257,30 @@ export const api = {
       }),
     }),
 
-  realtimeToken: () =>
+  realtimeToken: (settings?: RealtimeSettings) =>
     jsonFetch<RealtimeToken>("/api/realtime/token", {
       method: "POST",
-      body: "{}",
+      body: JSON.stringify(settings ?? {}),
     }),
+
+  recordRealtimeUsage: (body: {
+    session_id: string;
+    attempt_id?: string;
+    drill_id?: string;
+    source: RealtimeUsageEvent["source"];
+    model?: string | null;
+    response_id?: string | null;
+    usage: RealtimeUsageEvent["usage"];
+  }) =>
+    jsonFetch<{ ok: boolean; session: UsageTotals }>("/api/realtime/usage", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  usageSummary: (sessionId?: string) =>
+    jsonFetch<UsageSummary>(
+      `/api/usage/summary${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ""}`,
+    ),
 
   progress: () =>
     jsonFetch<{
@@ -189,6 +320,27 @@ export const api = {
   sessionSummary: (sessionId: string) =>
     jsonFetch<SessionSummary>(`/api/drill-sessions/${sessionId}/summary`),
 
+  sessionEvents: (sessionId: string) =>
+    jsonFetch<{
+      events: {
+        id: number;
+        session_id: string;
+        event_type:
+          | "session_created"
+          | "session_resumed"
+          | "drill_picked"
+          | "transcript_submitted"
+          | "grade_completed"
+          | "draft_activated"
+          | "draft_deactivated"
+          | "draft_discarded"
+          | "drill_imported"
+          | "session_ended";
+        payload: Record<string, unknown> | null;
+        created_at: string;
+      }[];
+    }>(`/api/drill-sessions/${sessionId}/events`),
+
   endSession: (sessionId: string) =>
     jsonFetch<SessionSummary>(`/api/drill-sessions/${sessionId}/end`, {
       method: "POST",
@@ -207,6 +359,29 @@ export const api = {
       };
       return { status: res.status, ...json };
     }),
+
+  recentSessions: (limit = 25) =>
+    jsonFetch<{
+      sessions: {
+        id: string;
+        mode: Mode;
+        started_at: string;
+        ended_at: string | null;
+        drills_attempted: number;
+        drills_graded: number;
+        average_score: number;
+      }[];
+    }>(`/api/sessions?limit=${limit}`),
+
+  stats: () =>
+    jsonFetch<{
+      total: number;
+      active: number;
+      drafts: number;
+      by_topic: { topic: string; active: number; drafts: number }[];
+      by_difficulty: { difficulty: number; active: number; drafts: number }[];
+      by_trap_type: { trap_type: string; count: number }[];
+    }>("/api/stats"),
 
   drafts: () =>
     jsonFetch<{

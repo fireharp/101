@@ -108,5 +108,40 @@ export function runMigrations(): void {
       payload TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS usage_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      attempt_id TEXT,
+      drill_id TEXT,
+      source TEXT NOT NULL,
+      model TEXT,
+      response_id TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      input_text_tokens INTEGER NOT NULL DEFAULT 0,
+      input_audio_tokens INTEGER NOT NULL DEFAULT 0,
+      cached_tokens INTEGER NOT NULL DEFAULT 0,
+      output_text_tokens INTEGER NOT NULL DEFAULT 0,
+      output_audio_tokens INTEGER NOT NULL DEFAULT 0,
+      estimated_cost_usd REAL,
+      raw_usage TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_usage_events_session
+      ON usage_events(session_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_usage_events_attempt
+      ON usage_events(attempt_id);
+
+    CREATE INDEX IF NOT EXISTS idx_usage_events_drill
+      ON usage_events(user_id, drill_id);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_events_response
+      ON usage_events(response_id)
+      WHERE response_id IS NOT NULL;
   `);
 }

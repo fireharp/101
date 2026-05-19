@@ -70,6 +70,21 @@ export interface GeneratedCard {
   next_due_at?: string;
 }
 
+export interface TokenUsage {
+  model?: string | null;
+  response_id?: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  input_text_tokens: number;
+  input_audio_tokens: number;
+  cached_tokens: number;
+  output_text_tokens: number;
+  output_audio_tokens: number;
+  estimated_cost_usd: number | null;
+  raw_usage?: Record<string, unknown>;
+}
+
 export interface UserSkillState {
   user_id: string;
   topic: string;
@@ -88,6 +103,7 @@ export interface GradingResult {
   ideal_short_answer: string;
   follow_up_drills: string[];
   cards: GeneratedCard[];
+  usage?: TokenUsage;
   breakdown: {
     must_have_coverage: number;
     answer_clarity: number;

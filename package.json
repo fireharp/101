@@ -9,6 +9,8 @@
     "test": "pnpm -r test",
     "dev:backend": "pnpm --filter @drill/backend dev",
     "dev:frontend": "pnpm --filter @drill/frontend dev",
+    "extract:resources": "pnpm --filter @drill/backend extract:resources",
+    "import:resource-drafts": "pnpm --filter @drill/backend import:resource-drafts",
     "smoke:realtime": "node scripts/realtime-webrtc-smoke.mjs",
     "smoke:realtime:multi": "REALTIME_SMOKE_REQUIRE_MULTI_TURN=1 node scripts/realtime-webrtc-smoke.mjs",
     "smoke:realtime:loop": "REALTIME_SMOKE_REQUIRE_LOOP=1 node scripts/realtime-webrtc-smoke.mjs",

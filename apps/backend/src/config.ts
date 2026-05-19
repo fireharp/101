@@ -23,6 +23,7 @@ export const config = {
     process.env.OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE ?? "",
   gradingModel: process.env.OPENAI_GRADING_MODEL ?? "gpt-4.1-mini",
   realtimeVoice: process.env.REALTIME_VOICE ?? "marin",
+  realtimeVoiceSpeed: Number(process.env.OPENAI_REALTIME_VOICE_SPEED ?? 1.25),
   // Optional: reference an OpenAI server-side prompt (Prompt Library) instead
   // of inlining local Realtime instructions.
   realtimePromptId: process.env.OPENAI_REALTIME_PROMPT_ID ?? "",

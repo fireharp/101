@@ -4,7 +4,12 @@ import {
   useRef,
   useState,
 } from "react";
-import { api } from "./api.ts";
+import {
+  api,
+  isApiError,
+  type RealtimeSettings,
+  type RealtimeUsageEvent,
+} from "./api.ts";
 
 /**
  * WebRTC client for OpenAI Realtime per LOCAL.md §3 Option A.
@@ -33,6 +38,9 @@ type RealtimeServerEvent = {
   transcript?: string;
   delta?: string;
   error?: { message?: string };
+  response_id?: string;
+  usage?: Record<string, unknown>;
+  response?: { id?: string; model?: string; usage?: Record<string, unknown> };
   // Function-call events (LOCAL.md §6 tool protocol).
   // `name` is reliably present on `response.output_item.{added,done}` when
   // item.type=function_call. `response.function_call_arguments.done` may
@@ -56,17 +64,32 @@ export type RealtimeToolCall = {
   arguments: Record<string, unknown>;
 };
 
+export type RealtimeMessage = {
+  id: string;
+  role: "coach" | "user";
+  text: string;
+  at: number;
+};
+
 export type RealtimeToolHandler = (
   call: RealtimeToolCall,
 ) => Promise<Record<string, unknown>>;
 
-type RealtimeDebugEvent = {
+export type RealtimeUsageHandler = (
+  event: RealtimeUsageEvent,
+) => Promise<void> | void;
+
+export type RealtimeDebugEvent = {
   type: string;
   at: number;
   state?: string;
   message?: string;
   deltaLength?: number;
   transcriptLength?: number;
+  statusCode?: number;
+  requestId?: string | null;
+  openaiRequestId?: string | null;
+  retryable?: boolean;
 };
 
 type RealtimeDebug = {
@@ -95,11 +118,17 @@ export interface RealtimeHandle {
   error: string | null;
   start: (
     initialDrill?: string,
-    opts?: { pressure?: boolean; attemptId?: string },
+    opts?: {
+      pressure?: boolean;
+      attemptId?: string;
+      settings?: RealtimeSettings;
+      autoAdvance?: boolean;
+    },
   ) => Promise<void>;
   stop: () => Promise<void>;
   transcript: string;
   agentTranscript: string;
+  messages: RealtimeMessage[];
   /**
    * True while the model is emitting audio for the current response.
    * Derived from response.output_audio_transcript.delta arrival vs the
@@ -111,13 +140,16 @@ export interface RealtimeHandle {
    * the mic is alive without listening to a Web Audio loopback.
    */
   micLevel: number;
+  debugEvents: RealtimeDebugEvent[];
   audioEl: React.RefObject<HTMLAudioElement | null>;
   send: (event: Record<string, unknown>) => void;
   pushDrill: (
     question: string,
-    opts?: { pressure?: boolean; attemptId?: string },
+    opts?: { pressure?: boolean; attemptId?: string; autoAdvance?: boolean },
   ) => void;
+  updateSessionSettings: (settings: RealtimeSettings) => void;
   setToolHandler: (handler: RealtimeToolHandler | null) => void;
+  setUsageHandler: (handler: RealtimeUsageHandler | null) => void;
 }
 
 export function useRealtime(): RealtimeHandle {
@@ -125,8 +157,10 @@ export function useRealtime(): RealtimeHandle {
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState("");
   const [agentTranscript, setAgentTranscript] = useState("");
+  const [messages, setMessages] = useState<RealtimeMessage[]>([]);
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
+  const [debugEvents, setDebugEvents] = useState<RealtimeDebugEvent[]>([]);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
@@ -134,15 +168,27 @@ export function useRealtime(): RealtimeHandle {
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const micLevelRafRef = useRef<number | null>(null);
+  const unmountStopTimerRef = useRef<number | null>(null);
   const transcriptItemsRef = useRef<Map<string, string>>(new Map());
   const agentTranscriptItemsRef = useRef<Map<string, string>>(new Map());
+  const messagesRef = useRef<Map<string, RealtimeMessage>>(new Map());
   const toolHandlerRef = useRef<RealtimeToolHandler | null>(null);
+  const usageHandlerRef = useRef<RealtimeUsageHandler | null>(null);
+  const modelRef = useRef<string | null>(null);
+  const autoAdvanceRef = useRef(true);
+  const pendingAutoNextRef = useRef(false);
+  const autoNextResponseIdRef = useRef<string | null>(null);
+  const autoNextTimerRef = useRef<number | null>(null);
   const pendingFunctionCallsRef = useRef<
     Map<string, { name: string; call_id: string; dispatched: boolean }>
   >(new Map());
 
   const setToolHandler = useCallback((handler: RealtimeToolHandler | null) => {
     toolHandlerRef.current = handler;
+  }, []);
+
+  const setUsageHandler = useCallback((handler: RealtimeUsageHandler | null) => {
+    usageHandlerRef.current = handler;
   }, []);
 
   const send = useCallback((event: Record<string, unknown>) => {
@@ -184,6 +230,10 @@ export function useRealtime(): RealtimeHandle {
         window.clearTimeout(micLevelRafRef.current);
         micLevelRafRef.current = null;
       }
+      if (autoNextTimerRef.current !== null) {
+        window.clearTimeout(autoNextTimerRef.current);
+        autoNextTimerRef.current = null;
+      }
       await audioCtxRef.current?.close();
     } catch {
       /* noop */
@@ -192,6 +242,8 @@ export function useRealtime(): RealtimeHandle {
     pcRef.current = null;
     micStreamRef.current = null;
     audioCtxRef.current = null;
+    pendingAutoNextRef.current = false;
+    autoNextResponseIdRef.current = null;
     setMicLevel(0);
     setIsAgentSpeaking(false);
   }, []);
@@ -204,9 +256,32 @@ export function useRealtime(): RealtimeHandle {
     recordDebugStatus("idle");
   }, [closeRealtime]);
 
+  const syncDebugEvents = useCallback(() => {
+    setDebugEvents([...getDebug().events].slice(-12));
+  }, []);
+
+  const updateSessionSettings = useCallback(
+    (settings: RealtimeSettings) => {
+      send({
+        type: "session.update",
+        session: buildRealtimeSessionUpdate(settings),
+      });
+      recordDebugEvent("session.update.settings", {
+        state: `${settings.vad.mode}/${settings.voice_speed}x`,
+      });
+      syncDebugEvents();
+    },
+    [send, syncDebugEvents],
+  );
+
   const pushDrill = useCallback(
-    (question: string, opts: { pressure?: boolean; attemptId?: string } = {}) => {
+    (
+      question: string,
+      opts: { pressure?: boolean; attemptId?: string; autoAdvance?: boolean } = {},
+    ) => {
       if (!question) return;
+      const autoAdvance = opts.autoAdvance ?? true;
+      autoAdvanceRef.current = autoAdvance;
       const pressureClause = opts.pressure
         ? "\n\nPRESSURE MODE: interrupt rambling after ~10 seconds. If the user stalls, snap 'Default answer now.' Be sharper, shorter, more critical than usual. Force at least one pressure follow-up regardless of answer quality."
         : "";
@@ -235,7 +310,10 @@ export function useRealtime(): RealtimeHandle {
         response: {
           tools: [],
           instructions:
-            "Ask the current drill question above in one breath, then stop and wait for the user's answer. Do not give hints. After the user answers, call submit_answer_transcript before any commentary, then grade_attempt. After grading, immediately call get_next_drill and ask the new question — do not wait for me." +
+            "Ask the current drill question above in one breath, then stop and wait for the user's answer. Do not give hints. After the user answers, call submit_answer_transcript before any commentary, then grade_attempt." +
+            (autoAdvance
+              ? " After grading, immediately call get_next_drill and ask the new question — do not wait for me."
+              : " After grading, stop; the host app controls when the next drill starts.") +
             pressureClause,
         },
       });
@@ -245,17 +323,32 @@ export function useRealtime(): RealtimeHandle {
 
   const start = useCallback(async (
     initialDrill?: string,
-    opts: { pressure?: boolean; attemptId?: string } = {},
+    opts: {
+      pressure?: boolean;
+      attemptId?: string;
+      settings?: RealtimeSettings;
+      autoAdvance?: boolean;
+    } = {},
   ) => {
     setError(null);
     setTranscript("");
     setAgentTranscript("");
+    setMessages([]);
     transcriptItemsRef.current.clear();
     agentTranscriptItemsRef.current.clear();
+    messagesRef.current.clear();
     setStatus("connecting");
     resetDebug();
+    setDebugEvents([...getDebug().events]);
     try {
-      const token = await api.realtimeToken();
+      recordDebugEvent("token.request");
+      syncDebugEvents();
+      const token = await api.realtimeToken(opts.settings);
+      modelRef.current = token.model;
+      recordDebugEvent("token.ok", {
+        state: `${token.model}/${token.voice}`,
+      });
+      syncDebugEvents();
       const pc = new RTCPeerConnection();
       pcRef.current = pc;
 
@@ -377,12 +470,28 @@ export function useRealtime(): RealtimeHandle {
           if (ev.type === "error") {
             recordDebugError(ev.error?.message ?? "Realtime server error");
           }
-          handleEvent(ev, transcriptItemsRef, setTranscript);
+          handleEvent(
+            ev,
+            transcriptItemsRef,
+            setTranscript,
+            messagesRef,
+            setMessages,
+          );
           handleAgentTranscriptEvent(
             ev,
             agentTranscriptItemsRef,
             setAgentTranscript,
+            messagesRef,
+            setMessages,
           );
+          const usageEvent = usageEventFromServerEvent(ev, modelRef.current);
+          if (usageEvent) {
+            recordDebugEvent("usage.observed", {
+              state: usageEvent.source,
+              deltaLength: usageEvent.usage.total_tokens,
+            });
+            void usageHandlerRef.current?.(usageEvent);
+          }
           if (
             ev.type === "output_audio_buffer.started" ||
             ev.type === "response.output_audio_transcript.delta"
@@ -395,6 +504,47 @@ export function useRealtime(): RealtimeHandle {
             ev.type === "response.done"
           ) {
             setIsAgentSpeaking(false);
+          }
+          if (
+            ev.type === "response.created" &&
+            pendingAutoNextRef.current &&
+            autoNextResponseIdRef.current === "__awaiting_created"
+          ) {
+            autoNextResponseIdRef.current = ev.response?.id ?? ev.response_id ?? "";
+            recordDebugEvent("autoplay.verdict.started", {
+              state: autoNextResponseIdRef.current || "unknown-response",
+            });
+          }
+          const responseId = ev.response?.id ?? ev.response_id ?? "";
+          if (
+            ev.type === "response.done" &&
+            pendingAutoNextRef.current &&
+            autoNextResponseIdRef.current !== "__awaiting_created" &&
+            (!autoNextResponseIdRef.current ||
+              !responseId ||
+              autoNextResponseIdRef.current === responseId)
+          ) {
+            pendingAutoNextRef.current = false;
+            autoNextResponseIdRef.current = null;
+            recordDebugEvent("autoplay.next.queued", { state: "1200ms" });
+            autoNextTimerRef.current = window.setTimeout(() => {
+              send({
+                type: "conversation.item.create",
+                item: {
+                  type: "message",
+                  role: "user",
+                  content: [
+                    {
+                      type: "input_text",
+                      text:
+                        "Auto-advance now. Call get_next_drill and ask the new question.",
+                    },
+                  ],
+                },
+              });
+              send({ type: "response.create" });
+              recordDebugEvent("autoplay.next.sent");
+            }, 1200) as unknown as number;
           }
           if (
             ev.type &&
@@ -417,6 +567,12 @@ export function useRealtime(): RealtimeHandle {
             pendingFunctionCallsRef,
             toolHandlerRef.current,
             send,
+            () => {
+              if (!autoAdvanceRef.current) return;
+              pendingAutoNextRef.current = true;
+              autoNextResponseIdRef.current = "__awaiting_created";
+            },
+            () => autoAdvanceRef.current,
           );
         } catch {
           /* non-JSON, ignore */
@@ -426,6 +582,8 @@ export function useRealtime(): RealtimeHandle {
       // SDP offer → /v1/realtime/calls with ephemeral token.
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      recordDebugEvent("sdp.offer.created");
+      syncDebugEvents();
 
       const sdpResp = await fetch(
         `https://api.openai.com/v1/realtime/calls?model=${encodeURIComponent(token.model)}`,
@@ -440,24 +598,47 @@ export function useRealtime(): RealtimeHandle {
       );
       if (!sdpResp.ok) {
         const text = await sdpResp.text();
+        recordDebugEvent("sdp.error", {
+          statusCode: sdpResp.status,
+          requestId:
+            sdpResp.headers.get("x-request-id") ??
+            sdpResp.headers.get("openai-request-id"),
+        });
         throw new Error(
           `OpenAI WebRTC call failed (${sdpResp.status}): ${text.slice(0, 300)}`,
         );
       }
       const answer = { type: "answer" as const, sdp: await sdpResp.text() };
       await pc.setRemoteDescription(answer);
+      recordDebugEvent("sdp.ok");
+      syncDebugEvents();
     } catch (err) {
-      const message = (err as Error).message;
+      if (isApiError(err)) {
+        recordDebugEvent("api.error", {
+          statusCode: err.status,
+          requestId: err.requestId,
+          openaiRequestId: err.openaiRequestId,
+          retryable: err.retryable,
+        });
+      }
+      const message = formatRealtimeError(err);
       recordDebugError(message);
       await closeRealtime();
       setError(message);
       setStatus("error");
+      syncDebugEvents();
     }
-  }, [closeRealtime, pushDrill, send]);
+  }, [closeRealtime, pushDrill, send, syncDebugEvents]);
 
   useEffect(() => {
+    if (unmountStopTimerRef.current !== null) {
+      window.clearTimeout(unmountStopTimerRef.current);
+      unmountStopTimerRef.current = null;
+    }
     return () => {
-      void stop();
+      unmountStopTimerRef.current = window.setTimeout(() => {
+        void stop();
+      }, 0) as unknown as number;
     };
   }, [stop]);
 
@@ -468,12 +649,16 @@ export function useRealtime(): RealtimeHandle {
     stop,
     transcript,
     agentTranscript,
+    messages,
     isAgentSpeaking,
     micLevel,
+    debugEvents,
     audioEl: audioElRef,
     send,
     pushDrill,
+    updateSessionSettings,
     setToolHandler,
+    setUsageHandler,
   };
 }
 
@@ -497,6 +682,8 @@ function handleFunctionCallEvent(
   },
   handler: RealtimeToolHandler | null,
   send: (event: Record<string, unknown>) => void,
+  scheduleAutoNext: () => void,
+  shouldAutoAdvance: () => boolean,
 ): void {
   if (
     ev.type === "response.output_item.added" &&
@@ -528,6 +715,8 @@ function handleFunctionCallEvent(
       },
       handler,
       send,
+      scheduleAutoNext,
+      shouldAutoAdvance,
     );
     return;
   }
@@ -550,6 +739,8 @@ function handleFunctionCallEvent(
       },
       handler,
       send,
+      scheduleAutoNext,
+      shouldAutoAdvance,
     );
   }
 }
@@ -564,10 +755,70 @@ function safeParseArgs(raw: string | undefined): Record<string, unknown> {
   }
 }
 
+function usageEventFromServerEvent(
+  ev: RealtimeServerEvent,
+  fallbackModel: string | null,
+): RealtimeUsageEvent | null {
+  if (ev.type === "response.done" && ev.response?.usage) {
+    return {
+      source: "realtime_response",
+      model: ev.response.model ?? fallbackModel,
+      response_id: ev.response.id ?? ev.response_id ?? null,
+      usage: usageTotalsFromRaw(ev.response.usage, ev.response.model ?? fallbackModel),
+    };
+  }
+  if (
+    ev.type === "conversation.item.input_audio_transcription.completed" &&
+    ev.usage
+  ) {
+    return {
+      source: "realtime_transcription",
+      model: fallbackModel,
+      response_id: ev.item_id ? `transcription:${ev.item_id}` : null,
+      usage: usageTotalsFromRaw(ev.usage, fallbackModel),
+    };
+  }
+  return null;
+}
+
+function usageTotalsFromRaw(
+  raw: Record<string, unknown>,
+  model: string | null,
+): RealtimeUsageEvent["usage"] {
+  const inputDetails = usageRecord(raw.input_token_details);
+  const outputDetails = usageRecord(raw.output_token_details);
+  return {
+    events: 1,
+    model,
+    response_id: null,
+    input_tokens: usageNumber(raw.input_tokens),
+    output_tokens: usageNumber(raw.output_tokens),
+    total_tokens: usageNumber(raw.total_tokens),
+    input_text_tokens: usageNumber(inputDetails.text_tokens),
+    input_audio_tokens: usageNumber(inputDetails.audio_tokens),
+    cached_tokens: usageNumber(inputDetails.cached_tokens),
+    output_text_tokens: usageNumber(outputDetails.text_tokens),
+    output_audio_tokens: usageNumber(outputDetails.audio_tokens),
+    estimated_cost_usd: null,
+    raw_usage: raw,
+  };
+}
+
+function usageRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function usageNumber(value: unknown): number {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0;
+}
+
 async function runToolCall(
   call: RealtimeToolCall,
   handler: RealtimeToolHandler | null,
   send: (event: Record<string, unknown>) => void,
+  scheduleAutoNext: () => void,
+  shouldAutoAdvance: () => boolean,
 ): Promise<void> {
   let output: Record<string, unknown>;
   try {
@@ -598,26 +849,18 @@ async function runToolCall(
   if (
     call.name === "grade_attempt" &&
     !output.error &&
+    shouldAutoAdvance() &&
     !window.__drillSuppressAutoNextDrill
   ) {
-    send({ type: "response.create" });
-    setTimeout(() => {
-      send({
-        type: "conversation.item.create",
-        item: {
-          type: "message",
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text:
-                "Next drill, please. Call get_next_drill and ask the new question.",
-            },
-          ],
-        },
-      });
-      send({ type: "response.create" });
-    }, 2500);
+    send({
+      type: "response.create",
+      response: {
+        instructions:
+          "Say one short grading sentence only. Do not read the full rubric or cards aloud; the UI is showing those details.",
+      },
+    });
+    scheduleAutoNext();
+    recordDebugEvent("autoplay.next.backstop", { state: "after response.done" });
     return;
   }
 
@@ -628,13 +871,21 @@ function handleEvent(
   ev: RealtimeServerEvent,
   transcriptItemsRef: { current: Map<string, string> },
   setTranscriptText: (text: string) => void,
+  messagesRef: { current: Map<string, RealtimeMessage> },
+  setMessages: (messages: RealtimeMessage[]) => void,
 ): void {
   // Accumulate user input audio transcript so we have something to grade.
   if (
     ev.type === "conversation.item.input_audio_transcription.completed" &&
     typeof ev.transcript === "string"
   ) {
-    transcriptItemsRef.current.set(ev.item_id ?? "__completed", ev.transcript);
+    const itemId = ev.item_id ?? "__completed";
+    transcriptItemsRef.current.set(itemId, ev.transcript);
+    publishRealtimeMessage(messagesRef, setMessages, {
+      id: `user:${itemId}`,
+      role: "user",
+      text: ev.transcript,
+    });
     publishTranscript(transcriptItemsRef, setTranscriptText);
     return;
   }
@@ -644,7 +895,13 @@ function handleEvent(
   ) {
     const itemId = ev.item_id ?? "__streaming";
     const previous = transcriptItemsRef.current.get(itemId) ?? "";
-    transcriptItemsRef.current.set(itemId, previous + ev.delta);
+    const next = previous + ev.delta;
+    transcriptItemsRef.current.set(itemId, next);
+    publishRealtimeMessage(messagesRef, setMessages, {
+      id: `user:${itemId}`,
+      role: "user",
+      text: next,
+    });
     publishTranscript(transcriptItemsRef, setTranscriptText);
   }
 }
@@ -669,6 +926,8 @@ function handleAgentTranscriptEvent(
   ev: RealtimeServerEvent,
   agentTranscriptItemsRef: { current: Map<string, string> },
   setAgentTranscript: (text: string) => void,
+  messagesRef: { current: Map<string, RealtimeMessage> },
+  setMessages: (messages: RealtimeMessage[]) => void,
 ): void {
   if (
     ev.type === "response.output_audio_transcript.delta" &&
@@ -676,7 +935,13 @@ function handleAgentTranscriptEvent(
   ) {
     const itemId = ev.item_id ?? "__agent_streaming";
     const previous = agentTranscriptItemsRef.current.get(itemId) ?? "";
-    agentTranscriptItemsRef.current.set(itemId, previous + ev.delta);
+    const next = previous + ev.delta;
+    agentTranscriptItemsRef.current.set(itemId, next);
+    publishRealtimeMessage(messagesRef, setMessages, {
+      id: `coach:${itemId}`,
+      role: "coach",
+      text: next,
+    });
     publishTranscript(agentTranscriptItemsRef, setAgentTranscript);
     return;
   }
@@ -687,12 +952,32 @@ function handleAgentTranscriptEvent(
   ) {
     // The done event carries the final, authoritative transcript for this
     // item — replace any partial deltas with it.
-    agentTranscriptItemsRef.current.set(
-      ev.item_id ?? "__agent_done",
-      ev.transcript,
-    );
+    const itemId = ev.item_id ?? "__agent_done";
+    agentTranscriptItemsRef.current.set(itemId, ev.transcript);
+    publishRealtimeMessage(messagesRef, setMessages, {
+      id: `coach:${itemId}`,
+      role: "coach",
+      text: ev.transcript,
+    });
     publishTranscript(agentTranscriptItemsRef, setAgentTranscript);
   }
+}
+
+function publishRealtimeMessage(
+  messagesRef: { current: Map<string, RealtimeMessage> },
+  setMessages: (messages: RealtimeMessage[]) => void,
+  patch: { id: string; role: "coach" | "user"; text: string },
+): void {
+  const existing = messagesRef.current.get(patch.id);
+  messagesRef.current.set(patch.id, {
+    ...patch,
+    at: existing?.at ?? Date.now(),
+  });
+  setMessages(
+    Array.from(messagesRef.current.values())
+      .filter((message) => message.text.trim().length > 0)
+      .sort((a, b) => a.at - b.at),
+  );
 }
 
 function shouldDisableMicProcessing(): boolean {
@@ -701,6 +986,59 @@ function shouldDisableMicProcessing(): boolean {
     params.get("debugMic") === "raw" ||
     import.meta.env.VITE_REALTIME_RAW_MIC === "1"
   );
+}
+
+function formatRealtimeError(err: unknown): string {
+  if (!isApiError(err)) return (err as Error).message;
+  const parts = [err.message];
+  if (err.openaiRequestId) parts.push(`OpenAI request ${err.openaiRequestId}`);
+  if (err.requestId) parts.push(`local request ${err.requestId}`);
+  if (err.retryable) parts.push("retryable");
+  return parts.join(" · ");
+}
+
+function buildRealtimeSessionUpdate(settings: RealtimeSettings): Record<string, unknown> {
+  return {
+    audio: {
+      input: {
+        turn_detection: buildTurnDetection(settings),
+      },
+      output: {
+        speed: clamp(settings.voice_speed, 0.25, 1.5),
+      },
+    },
+    truncation: {
+      type: "retention_ratio",
+      retention_ratio: 0.8,
+      token_limits: {
+        post_instructions: 4000,
+      },
+    },
+  };
+}
+
+function buildTurnDetection(settings: RealtimeSettings): Record<string, unknown> {
+  if (settings.vad.mode === "semantic_vad") {
+    return {
+      type: "semantic_vad",
+      eagerness: settings.vad.eagerness,
+      create_response: true,
+      interrupt_response: settings.vad.interrupt_response,
+    };
+  }
+  return {
+    type: "server_vad",
+    threshold: clamp(settings.vad.threshold, 0, 1),
+    prefix_padding_ms: clamp(settings.vad.prefix_padding_ms, 0, 3000),
+    silence_duration_ms: clamp(settings.vad.silence_duration_ms, 100, 5000),
+    create_response: true,
+    interrupt_response: settings.vad.interrupt_response,
+  };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
 }
 
 function getDebug(): RealtimeDebug {

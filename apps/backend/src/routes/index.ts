@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import type { Request, Response } from "express";
 import { z } from "zod";
@@ -7,18 +8,23 @@ import {
   attempts,
   cards,
   drills,
+  events,
   sessions,
   skillState,
+  usageEvents,
   users,
 } from "../db/repo.js";
 import { selectNextDrill } from "../engines/rotation.js";
 import { gradeAttempt } from "../engines/grading.js";
 import {
   DRILL_COACH_INSTRUCTIONS,
+  RealtimeClientSecretError,
   mintRealtimeClientSecret,
+  type RealtimeTurnDetection,
 } from "../services/realtime.js";
 import { hasOpenAI } from "../services/llm.js";
-import type { Mode } from "../types.js";
+import { config } from "../config.js";
+import type { DrillAttempt, DrillItem, Mode, TokenUsage } from "../types.js";
 
 const DEFAULT_USER_ID = "demo-user";
 
@@ -52,22 +58,89 @@ apiRouter.get("/health", (_req: Request, res: Response) => {
 /* POST /api/realtime/token                                           */
 /* Mints an OpenAI Realtime ephemeral client secret.                  */
 /* ------------------------------------------------------------------ */
+const realtimeTokenSchema = z.object({
+  voice: z.string().min(1).optional(),
+  voice_speed: z.number().min(0.25).max(1.5).optional(),
+  vad: z
+    .object({
+      mode: z.enum(["server_vad", "semantic_vad"]).default("semantic_vad"),
+      threshold: z.number().min(0).max(1).default(0.5),
+      prefix_padding_ms: z.number().int().min(0).max(3000).default(500),
+      silence_duration_ms: z.number().int().min(100).max(5000).default(1200),
+      eagerness: z.enum(["low", "medium", "high", "auto"]).default("low"),
+      interrupt_response: z.boolean().default(true),
+    })
+    .optional(),
+});
+
 apiRouter.post("/realtime/token", async (req: Request, res: Response) => {
+  const requestId = req.header("x-request-id") ?? randomUUID();
+  const userId = userIdFromRequest(req);
+  res.setHeader("x-request-id", requestId);
   try {
     if (!hasOpenAI()) {
       return res.status(503).json({
         error: "OPENAI_API_KEY not configured on backend",
+        request_id: requestId,
       });
     }
-    const voice =
-      typeof req.body?.voice === "string" ? (req.body.voice as string) : undefined;
+    const parsed = realtimeTokenSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "invalid realtime token settings",
+        message: parsed.error.message,
+        request_id: requestId,
+      });
+    }
+    const vad = parsed.data.vad;
+    const turnDetection: RealtimeTurnDetection | undefined = vad
+      ? vad.mode === "semantic_vad"
+        ? {
+            type: "semantic_vad",
+            eagerness: vad.eagerness,
+            create_response: true,
+            interrupt_response: vad.interrupt_response,
+          }
+        : {
+            type: "server_vad",
+            threshold: vad.threshold,
+            prefix_padding_ms: vad.prefix_padding_ms,
+            silence_duration_ms: vad.silence_duration_ms,
+            create_response: true,
+            interrupt_response: vad.interrupt_response,
+          }
+      : undefined;
     const result = await mintRealtimeClientSecret({
       instructions: DRILL_COACH_INSTRUCTIONS,
-      voice,
+      voice: parsed.data.voice,
+      voiceSpeed: parsed.data.voice_speed,
+      turnDetection,
+      requestId,
+      userId,
     });
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    if (err instanceof RealtimeClientSecretError) {
+      return res.status(502).json({
+        error: "OpenAI Realtime token mint failed",
+        message: err.errorInfo.message,
+        request_id: requestId,
+        openai_request_id: err.openaiRequestId,
+        openai_status: err.upstreamStatus,
+        retryable: err.retryable,
+        retry_after: err.retryAfter,
+        openai_error: {
+          type: err.errorInfo.type,
+          code: err.errorInfo.code,
+          param: err.errorInfo.param,
+        },
+      });
+    }
+    console.error("[realtime] token.unhandled_error", {
+      request_id: requestId,
+      message: (err as Error).message,
+    });
+    res.status(500).json({ error: (err as Error).message, request_id: requestId });
   }
 });
 
@@ -87,7 +160,22 @@ apiRouter.post("/drill-sessions", (req: Request, res: Response) => {
   }
   users.ensure(userId);
   const session = sessions.create(userId, parsed.data.mode);
+  events.log(session.id, "session_created", {
+    user_id: userId,
+    mode: parsed.data.mode,
+  });
   res.json({ session });
+});
+
+/* ------------------------------------------------------------------ */
+/* GET /api/sessions                                                  */
+/* Recent sessions for the current user (newest first) with rollup    */
+/* stats. Drives the history panel.                                   */
+/* ------------------------------------------------------------------ */
+apiRouter.get("/sessions", (req: Request, res: Response) => {
+  const userId = userIdFromRequest(req);
+  const limit = Math.max(1, Math.min(100, Number(req.query.limit ?? 25)));
+  res.json({ sessions: sessions.recent(userId, limit) });
 });
 
 /* ------------------------------------------------------------------ */
@@ -130,6 +218,14 @@ apiRouter.post(
       user_id: userId,
       session_id: session.id,
       drill_id: drill.id,
+    });
+    events.log(session.id, "drill_picked", {
+      drill_id: drill.id,
+      attempt_id: attempt.id,
+      topic: drill.topic,
+      subtopic: drill.subtopic,
+      difficulty: drill.difficulty,
+      mode,
     });
 
     const prior = attempts.priorForDrill(userId, drill.id, 5);
@@ -241,6 +337,16 @@ apiRouter.post(
       score: grade.score,
     });
 
+    events.log(attempt.session_id, "grade_completed", {
+      attempt_id: attempt.id,
+      drill_id: drill.id,
+      score: grade.score,
+      verdict: grade.verdict,
+      missed_count: grade.missed_points.length,
+      cards_generated: persistedCards.length,
+    });
+    recordGradingUsage(attempt, drill, grade.usage);
+
     res.json({
       attempt_id: attempt.id,
       score: grade.score,
@@ -281,6 +387,7 @@ function buildSessionSummary(
       score: a.score,
       verdict: a.verdict,
       duration_seconds: a.duration_seconds,
+      usage: usageEvents.totalsForAttempt(a.id),
     };
   });
 
@@ -296,11 +403,31 @@ function buildSessionSummary(
     borderlines: graded.filter((a) => a.verdict === "borderline").length,
     fails: graded.filter((a) => a.verdict === "fail").length,
     topics_covered: [...topicSet],
+    usage: usageEvents.totalsForSession(userId, session.id),
     weakness_after: skillState
       .getAll(userId)
       .sort((a, b) => b.weakness_score - a.weakness_score),
     attempts: itemRows,
   };
+}
+
+function recordGradingUsage(
+  attempt: DrillAttempt,
+  drill: DrillItem,
+  usage: TokenUsage | undefined,
+): void {
+  if (!usage || usage.total_tokens <= 0) return;
+  usageEvents.record({
+    ...usage,
+    user_id: attempt.user_id,
+    session_id: attempt.session_id,
+    attempt_id: attempt.id,
+    drill_id: drill.id,
+    source: "chat_grading",
+    model: usage.model ?? config.gradingModel,
+    response_id: usage.response_id ?? null,
+    estimated_cost_usd: usage.estimated_cost_usd ?? null,
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -338,7 +465,130 @@ apiRouter.post("/drill-sessions/:id/end", (req: Request, res: Response) => {
   }
   sessions.end(session.id);
   const ended = sessions.get(session.id) ?? { ...session, ended_at: new Date().toISOString() };
-  res.json(buildSessionSummary(userId, ended));
+  const summary = buildSessionSummary(userId, ended);
+  events.log(session.id, "session_ended", {
+    drills_attempted: summary.drills_attempted,
+    drills_graded: summary.drills_graded,
+    average_score: summary.average_score,
+    passes: summary.passes,
+    borderlines: summary.borderlines,
+    fails: summary.fails,
+  });
+  res.json(summary);
+});
+
+/* ------------------------------------------------------------------ */
+/* GET /api/drill-sessions/:id/events                                 */
+/* LOCAL.md §7 audit log: returns all session_events for the session  */
+/* in insertion order. Owner-scoped.                                  */
+/* ------------------------------------------------------------------ */
+apiRouter.get("/drill-sessions/:id/events", (req: Request, res: Response) => {
+  const userId = userIdFromRequest(req);
+  const sessionId = String(req.params.id ?? "");
+  if (!sessionId) return res.status(400).json({ error: "missing id" });
+  const session = sessions.get(sessionId);
+  if (!session) return res.status(404).json({ error: "session not found" });
+  if (session.user_id !== userId) {
+    return res.status(403).json({ error: "session not owned by user" });
+  }
+  res.json({ events: events.listForSession(session.id) });
+});
+
+/* ------------------------------------------------------------------ */
+/* POST /api/realtime/usage                                           */
+/* Stores token usage observed by the browser Realtime data channel.  */
+/* ------------------------------------------------------------------ */
+const tokenUsageSchema = z.object({
+  model: z.string().min(1).nullable().optional(),
+  response_id: z.string().min(1).nullable().optional(),
+  input_tokens: z.number().int().min(0).default(0),
+  output_tokens: z.number().int().min(0).default(0),
+  total_tokens: z.number().int().min(0).default(0),
+  input_text_tokens: z.number().int().min(0).default(0),
+  input_audio_tokens: z.number().int().min(0).default(0),
+  cached_tokens: z.number().int().min(0).default(0),
+  output_text_tokens: z.number().int().min(0).default(0),
+  output_audio_tokens: z.number().int().min(0).default(0),
+  estimated_cost_usd: z.number().min(0).nullable().optional(),
+  raw_usage: z.record(z.string(), z.unknown()).optional(),
+});
+
+const realtimeUsageSchema = z.object({
+  session_id: z.string().min(1),
+  attempt_id: z.string().min(1).optional(),
+  drill_id: z.string().min(1).optional(),
+  source: z.enum(["realtime_response", "realtime_transcription"]),
+  model: z.string().min(1).nullable().optional(),
+  response_id: z.string().min(1).nullable().optional(),
+  usage: tokenUsageSchema,
+});
+
+apiRouter.post("/realtime/usage", (req: Request, res: Response) => {
+  const parsed = realtimeUsageSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.message });
+  }
+  const userId = userIdFromRequest(req);
+  const session = sessions.get(parsed.data.session_id);
+  if (!session) return res.status(404).json({ error: "session not found" });
+  if (session.user_id !== userId) {
+    return res.status(403).json({ error: "session not owned by user" });
+  }
+
+  let attempt: DrillAttempt | null = null;
+  if (parsed.data.attempt_id) {
+    attempt = attempts.get(parsed.data.attempt_id);
+    if (!attempt) return res.status(404).json({ error: "attempt not found" });
+    if (attempt.user_id !== userId || attempt.session_id !== session.id) {
+      return res.status(403).json({ error: "attempt not owned by session" });
+    }
+    if (parsed.data.drill_id && parsed.data.drill_id !== attempt.drill_id) {
+      return res.status(400).json({ error: "drill_id does not match attempt" });
+    }
+  }
+
+  const u = parsed.data.usage;
+  usageEvents.record({
+    ...u,
+    user_id: userId,
+    session_id: session.id,
+    attempt_id: attempt?.id ?? parsed.data.attempt_id ?? null,
+    drill_id: attempt?.drill_id ?? parsed.data.drill_id ?? null,
+    source: parsed.data.source,
+    model: parsed.data.model ?? u.model ?? null,
+    response_id: parsed.data.response_id ?? u.response_id ?? null,
+    estimated_cost_usd: u.estimated_cost_usd ?? null,
+  });
+
+  res.json({
+    ok: true,
+    session: usageEvents.totalsForSession(userId, session.id),
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* GET /api/usage/summary                                             */
+/* Aggregates usage for the current user and optional session.         */
+/* ------------------------------------------------------------------ */
+apiRouter.get("/usage/summary", (req: Request, res: Response) => {
+  const userId = userIdFromRequest(req);
+  const sessionId =
+    typeof req.query.session_id === "string" ? req.query.session_id : undefined;
+  if (sessionId) {
+    const session = sessions.get(sessionId);
+    if (!session) return res.status(404).json({ error: "session not found" });
+    if (session.user_id !== userId) {
+      return res.status(403).json({ error: "session not owned by user" });
+    }
+  }
+  res.json({
+    total: usageEvents.totalsForUser(userId),
+    session: sessionId ? usageEvents.totalsForSession(userId, sessionId) : null,
+    by_source: usageEvents.bySource(userId, sessionId),
+    by_attempt: sessionId
+      ? usageEvents.byAttemptForSession(userId, sessionId)
+      : [],
+  });
 });
 
 /* ------------------------------------------------------------------ */
@@ -429,6 +679,15 @@ apiRouter.get("/drills/drafts", (_req: Request, res: Response) => {
 });
 
 /* ------------------------------------------------------------------ */
+/* GET /api/stats                                                     */
+/* Drill bank distribution (active vs draft, by topic / difficulty /  */
+/* trap_type) so content authors can spot coverage gaps.              */
+/* ------------------------------------------------------------------ */
+apiRouter.get("/stats", (_req: Request, res: Response) => {
+  res.json(drills.stats());
+});
+
+/* ------------------------------------------------------------------ */
 /* POST /api/drills/import                                            */
 /* Bulk-imports drills from YAML. Accepts either:                     */
 /*   - Content-Type: application/x-yaml | text/yaml (raw body), or    */
@@ -453,6 +712,10 @@ apiRouter.post("/drills/import", (req: Request, res: Response) => {
       .json({ error: "send YAML body or JSON { yaml: '...' }" });
   }
   const result = importDrillsFromYaml(yamlText);
+  events.log("__admin__", "drill_imported", {
+    imported: result.imported,
+    skipped: result.skipped.length,
+  });
   res.status(result.ok ? 200 : 207).json(result);
 });
 
@@ -500,6 +763,7 @@ apiRouter.post("/drills/:id/activate", (req: Request, res: Response) => {
   const ok = drills.setActive(id, true);
   if (!ok) return res.status(404).json({ error: "drill not found" });
   const drill = drills.get(id);
+  events.log("__admin__", "draft_activated", { drill_id: id });
   res.json({ ok: true, drill });
 });
 
@@ -515,6 +779,7 @@ apiRouter.post("/drills/:id/deactivate", (req: Request, res: Response) => {
   const ok = drills.setActive(id, false);
   if (!ok) return res.status(404).json({ error: "drill not found" });
   const drill = drills.get(id);
+  events.log("__admin__", "draft_deactivated", { drill_id: id });
   res.json({ ok: true, drill });
 });
 
@@ -533,6 +798,7 @@ apiRouter.delete("/drills/:id", (req: Request, res: Response) => {
     });
   }
   const ok = drills.remove(id, true);
+  if (ok) events.log("__admin__", "draft_discarded", { drill_id: id });
   res.json({ ok });
 });
 
@@ -735,6 +1001,7 @@ apiRouter.post("/realtime/tool-call", async (req: Request, res: Response) => {
           subtopic: drill.subtopic,
           score: grade.score,
         });
+        recordGradingUsage(attempt, drill, grade.usage);
         return res.json({
           result: {
             attempt_id: attempt.id,

@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "resources": [
+    {
+      "slug": "system-design-primer",
+      "title": "The System Design Primer",
+      "type": "github_repo",
+      "url": "https://github.com/donnemartin/system-design-primer",
+      "repo": "donnemartin/system-design-primer",
+      "branch": "master",
+      "skill_path": "domain-skills/system-design-primer/scraping.md",
+      "include_paths": [
+        "README.md",
+        "solutions/system_design/**/README.md"
+      ],
+      "exclude_paths": [
+        "README-*.md",
+        "solutions/system_design/**/README-*.md"
+      ],
+      "tags": ["fixture", "github", "system_design"]
+    },
+    {
+      "slug": "bytebytego-system-design-101",
+      "title": "System Design 101",
+      "type": "github_repo",
+      "url": "https://github.com/ByteByteGoHq/system-design-101",
+      "repo": "ByteByteGoHq/system-design-101",
+      "branch": "main",
+      "skill_path": "domain-skills/bytebytego-system-design-101/scraping.md",
+      "include_paths": [
+        "README.md",
+        "data/categories/*.md",
+        "data/guides/*.md"
+      ],
+      "exclude_paths": [
+        "CONTRIBUTING.md",
+        "LICENSE.md"
+      ],
+      "tags": ["fixture", "github", "system_design"]
+    },
+    {
+      "slug": "awesome-system-design-resources",
+      "title": "Awesome System Design Resources",
+      "type": "github_repo",
+      "url": "https://github.com/ashishps1/awesome-system-design-resources",
+      "repo": "ashishps1/awesome-system-design-resources",
+      "branch": "main",
+      "skill_path": "domain-skills/awesome-system-design-resources/scraping.md",
+      "include_paths": [
+        "README.md"
+      ],
+      "exclude_paths": [],
+      "tags": ["fixture", "github", "system_design", "curated_index"]
+    }
+  ]
+}

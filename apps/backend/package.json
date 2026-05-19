@@ -11,6 +11,8 @@
     "seed": "tsx src/seed.ts",
     "seed:templates": "tsx src/seed-templates.ts",
     "gen:drills": "tsx src/gen-drills.ts",
+    "extract:resources": "tsx src/resources/cli.ts",
+    "import:resource-drafts": "tsx src/resources/import-drafts.ts",
     "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {

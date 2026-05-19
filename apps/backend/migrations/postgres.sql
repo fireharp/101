@@ -117,3 +117,34 @@ CREATE TABLE IF NOT EXISTS session_events (
   payload     JSONB,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS usage_events (
+  id                  BIGSERIAL PRIMARY KEY,
+  user_id             TEXT NOT NULL,
+  session_id          TEXT NOT NULL,
+  attempt_id          TEXT,
+  drill_id            TEXT,
+  source              TEXT NOT NULL,
+  model               TEXT,
+  response_id         TEXT UNIQUE,
+  input_tokens        INT NOT NULL DEFAULT 0,
+  output_tokens       INT NOT NULL DEFAULT 0,
+  total_tokens        INT NOT NULL DEFAULT 0,
+  input_text_tokens   INT NOT NULL DEFAULT 0,
+  input_audio_tokens  INT NOT NULL DEFAULT 0,
+  cached_tokens       INT NOT NULL DEFAULT 0,
+  output_text_tokens  INT NOT NULL DEFAULT 0,
+  output_audio_tokens INT NOT NULL DEFAULT 0,
+  estimated_cost_usd  NUMERIC(12,8),
+  raw_usage           JSONB,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_events_session
+  ON usage_events (session_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_usage_events_attempt
+  ON usage_events (attempt_id);
+
+CREATE INDEX IF NOT EXISTS idx_usage_events_drill
+  ON usage_events (user_id, drill_id);

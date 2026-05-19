@@ -65,8 +65,8 @@ async function main() {
     await page.goto(`${frontendUrl}/?debugMic=raw`, {
       waitUntil: "domcontentloaded",
     });
+    await page.getByTestId("interaction-voice").click();
     await page.getByRole("button", { name: "Start session" }).click();
-    await page.getByTestId("start-voice").waitFor({ state: "visible" });
 
     await page.waitForFunction(
       () => window.__drillRealtimeDebug?.status === "connected",
@@ -89,15 +89,68 @@ async function main() {
     await page.waitForFunction(
       () => {
         const node = document.querySelector('[data-testid="transcript"]');
-        return node instanceof HTMLTextAreaElement && node.value.trim().length >= 8;
+        if (node instanceof HTMLTextAreaElement && node.value.trim().length >= 8) {
+          return true;
+        }
+        const voiceText = Array.from(
+          document.querySelectorAll('[data-testid="voice-message-user"]'),
+        )
+          .map((message) => message.textContent ?? "")
+          .join(" ")
+          .trim();
+        if (voiceText.length >= 8) return true;
+        const events = window.__drillRealtimeDebug?.events ?? [];
+        const handled = events.some(
+          (event) =>
+            event.type === "tool_call.handled" &&
+            event.state === "submit_answer_transcript",
+        );
+        if (handled) return true;
+        const rawEvents = window.__drillRealtimeDebug?.rawFunctionCallEvents ?? [];
+        return rawEvents.some((event) => {
+          const name = event?.item?.name ?? event?.name;
+          if (name !== "submit_answer_transcript") return false;
+          const rawArgs = event?.item?.arguments ?? event?.arguments;
+          return typeof rawArgs === "string" && rawArgs.includes("transcript");
+        });
       },
       undefined,
       { timeout: timeoutMs },
     );
 
-    const transcriptLength = (
-      await page.getByTestId("transcript").inputValue()
-    ).trim().length;
+    const transcript = await page.evaluate(() => {
+      const node = document.querySelector('[data-testid="transcript"]');
+      const mirrored =
+        node instanceof HTMLTextAreaElement ? node.value.trim() : "";
+      if (mirrored) return { source: "textarea", text: mirrored };
+
+      const voiceText = Array.from(
+        document.querySelectorAll('[data-testid="voice-message-user"]'),
+      )
+        .map((message) => message.textContent ?? "")
+        .join(" ")
+        .trim();
+      if (voiceText) return { source: "voice_message", text: voiceText };
+
+      const rawEvents = window.__drillRealtimeDebug?.rawFunctionCallEvents ?? [];
+      for (let i = rawEvents.length - 1; i >= 0; i -= 1) {
+        const event = rawEvents[i];
+        const name = event?.item?.name ?? event?.name;
+        if (name !== "submit_answer_transcript") continue;
+        const rawArgs = event?.item?.arguments ?? event?.arguments;
+        if (typeof rawArgs !== "string" || !rawArgs) continue;
+        try {
+          const args = JSON.parse(rawArgs);
+          if (typeof args.transcript === "string" && args.transcript.trim()) {
+            return { source: "tool_call", text: args.transcript.trim() };
+          }
+        } catch {
+          /* keep scanning */
+        }
+      }
+      return { source: "none", text: "" };
+    });
+    const transcriptLength = transcript.text.length;
 
     // Give the agent a moment to fire tool calls after the user audio
     // ends — these typically arrive in the seconds after
@@ -236,7 +289,7 @@ async function main() {
       `realtime-webrtc-smoke-${Date.now()}.png`,
     );
     await page.screenshot({ path: screenshot, fullPage: true });
-    await page.getByRole("button", { name: "Stop voice" }).click().catch(() => {});
+    await page.getByRole("button", { name: "Stop session" }).click().catch(() => {});
 
     console.log(
       JSON.stringify(
@@ -246,6 +299,7 @@ async function main() {
           audioFile,
           audio,
           transcriptLength,
+          transcriptSource: transcript.source,
           debugStatus: debug?.status ?? null,
           debugErrors: debug?.errors ?? [],
           questionAudioEventCount: questionAudioEvents.length,

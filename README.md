@@ -195,12 +195,14 @@ Verdict: `>= 0.80 pass`, `0.60–0.79 borderline`, `< 0.60 fail`.
 | `GET`  | `/api/drills/drafts` | Layer-3 LLM drafts (is_active=false) |
 | `GET`  | `/api/drills/export.yaml` | dump active drills as YAML (seed format); `?include_drafts=1` to include drafts |
 | `POST` | `/api/drills/import` | upsert drills from YAML body (or `{ yaml: "…" }`); 207 with per-item errors when partial |
+| `GET`  | `/api/stats` | drill bank distribution: active vs drafts, by topic / difficulty / trap_type |
 | `POST` | `/api/drills/:id/activate` | promote a draft into the rotation pool |
 | `PATCH` | `/api/drills/:id` | edit rubric / canonical answer / difficulty / question text |
 | `POST` | `/api/drills/:id/test-grade` | dry-run grader against a sample answer (no persist) |
 | `DELETE` | `/api/drills/:id` | delete a draft (active drills are protected) |
 | `POST` | `/api/realtime/tool-call` | dispatch for the voice agent's tool calls |
 | `GET`  | `/api/drill-sessions/:id/summary` | per-session stats (attempts, scores, topics) |
+| `GET`  | `/api/drill-sessions/:id/events` | audit log (LOCAL.md §7 `session_events`) |
 | `POST` | `/api/drill-sessions/:id/end` | mark ended + return summary |
 
 ## Seed drills
@@ -334,6 +336,23 @@ healthy, even with audio output muted:
   the WebRTC handshake or the ephemeral token mint fails, a red banner
   appears with the message and a short troubleshooting hint (mic
   permission · `OPENAI_API_KEY` on backend · HTTPS/localhost).
+
+### Keyboard shortcuts
+
+The drill loop is keyboard-first so you can stay typing/talking without
+reaching for the mouse:
+
+| Keys | Action |
+| --- | --- |
+| `⌘` / `Ctrl` + `Enter` | Submit the typed answer (works from inside the textarea) |
+| `n` | Next drill |
+| `e` | End session |
+| `p` | Toggle pressure mode |
+
+Single-key shortcuts (`n`, `e`, `p`) are suppressed while any input,
+textarea, select, or `contentEditable` element has focus, so typing the
+answer never triggers them. The hint row sits right under the action
+buttons (`data-testid="shortcuts-hint"`).
 
 ### Audio troubleshooting
 

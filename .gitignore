@@ -7,6 +7,7 @@ LOCAL.md
 # yes we scraped it, but no reason to publish
 .agents/skills/exponent-questions/
 data/exponent/questions/
+data/resources/
 
 # node
 node_modules/

@@ -173,10 +173,12 @@ test("session create → next drill → grade → summary round-trip", async () 
     drills_attempted: number;
     drills_graded: number;
     average_score: number;
+    usage: { total_tokens: number };
   }>("GET", `/api/drill-sessions/${sid}/summary`);
   assert.equal(summary.status, 200);
   assert.equal(summary.json.drills_attempted, 1);
   assert.equal(summary.json.drills_graded, 1);
+  assert.equal(summary.json.usage.total_tokens, 0);
 });
 
 test("session ownership is enforced", async () => {
@@ -344,6 +346,194 @@ test("GET /api/drills/export.yaml round-trips active drills (LOCAL.md §16 seed 
     is_active: boolean;
   }>;
   assert.ok(parsedWithDrafts.length >= parsed.length, "drafts add to export");
+});
+
+test("GET /api/stats returns drill bank distribution", async () => {
+  drills.upsert({
+    ...fixtures[2]!,
+    id: "fx_stats_draft_001",
+    is_active: false,
+  });
+  const r = await http<{
+    total: number;
+    active: number;
+    drafts: number;
+    by_topic: { topic: string; active: number; drafts: number }[];
+    by_difficulty: { difficulty: number; active: number; drafts: number }[];
+    by_trap_type: { trap_type: string; count: number }[];
+  }>("GET", "/api/stats");
+  assert.equal(r.status, 200);
+  assert.ok(r.json.total >= 2, "expected at least 2 drills total");
+  assert.equal(r.json.total, r.json.active + r.json.drafts);
+  // Our seeded fixtures include 2 active + 1 draft.
+  assert.ok(r.json.active >= 2);
+  assert.ok(r.json.drafts >= 1);
+  // Topic distribution should cover the fixture topics.
+  const topics = r.json.by_topic.map((t) => t.topic);
+  assert.ok(topics.includes("database"), `expected database in topics, got ${topics}`);
+  assert.ok(topics.includes("system_design"));
+  // Difficulty rows always reference 1..5.
+  for (const row of r.json.by_difficulty) {
+    assert.ok(row.difficulty >= 1 && row.difficulty <= 5);
+  }
+});
+
+test("session_events captures the full drill lifecycle", async () => {
+  const sess = await http<{ session: { id: string } }>(
+    "POST",
+    "/api/drill-sessions",
+    { mode: "mixed" },
+  );
+  const sid = sess.json.session.id;
+  const next = await http<{ drill: { attempt_id: string } }>(
+    "POST",
+    `/api/drill-sessions/${sid}/next`,
+    {},
+  );
+  const attemptId = next.json.drill.attempt_id;
+  await http(
+    "POST",
+    `/api/drill-attempts/${attemptId}/grade`,
+    {
+      transcript:
+        "composite B-tree on (category_id, price), equality before order, EXPLAIN ANALYZE",
+      duration_seconds: 35,
+    },
+  );
+  await http("POST", `/api/drill-sessions/${sid}/end`);
+
+  const evs = await http<{
+    events: { event_type: string; payload: Record<string, unknown> | null }[];
+  }>("GET", `/api/drill-sessions/${sid}/events`);
+  assert.equal(evs.status, 200);
+  const types = evs.json.events.map((e) => e.event_type);
+  for (const required of [
+    "session_created",
+    "drill_picked",
+    "grade_completed",
+    "session_ended",
+  ]) {
+    assert.ok(
+      types.includes(required),
+      `expected ${required} in events, got ${JSON.stringify(types)}`,
+    );
+  }
+
+  // Wrong-user can't read another session's audit log.
+  const wrong = await fetch(`${base}/api/drill-sessions/${sid}/events`, {
+    headers: {
+      "content-type": "application/json",
+      "x-user-id": "different-user",
+    },
+  });
+  assert.equal(wrong.status, 403);
+});
+
+test("realtime usage records response tokens once and appears in summary", async () => {
+  const sess = await http<{ session: { id: string } }>(
+    "POST",
+    "/api/drill-sessions",
+    { mode: "mixed" },
+  );
+  const sid = sess.json.session.id;
+  const next = await http<{ drill: { attempt_id: string; drill_id: string } }>(
+    "POST",
+    `/api/drill-sessions/${sid}/next`,
+    {},
+  );
+
+  const body = {
+    session_id: sid,
+    attempt_id: next.json.drill.attempt_id,
+    source: "realtime_response",
+    model: "gpt-realtime-2",
+    response_id: "resp_usage_test_001",
+    usage: {
+      input_tokens: 100,
+      output_tokens: 23,
+      total_tokens: 123,
+      input_text_tokens: 70,
+      input_audio_tokens: 30,
+      cached_tokens: 40,
+      output_text_tokens: 8,
+      output_audio_tokens: 15,
+      estimated_cost_usd: null,
+      raw_usage: { total_tokens: 123 },
+    },
+  };
+
+  const first = await http<{ session: { total_tokens: number } }>(
+    "POST",
+    "/api/realtime/usage",
+    body,
+  );
+  assert.equal(first.status, 200);
+  assert.equal(first.json.session.total_tokens, 123);
+
+  const duplicate = await http<{ session: { total_tokens: number } }>(
+    "POST",
+    "/api/realtime/usage",
+    body,
+  );
+  assert.equal(duplicate.status, 200);
+  assert.equal(
+    duplicate.json.session.total_tokens,
+    123,
+    "same response_id should be idempotent",
+  );
+
+  const summary = await http<{
+    usage: { total_tokens: number; input_audio_tokens: number };
+    attempts: { attempt_id: string; usage?: { total_tokens: number } }[];
+  }>("GET", `/api/drill-sessions/${sid}/summary`);
+  assert.equal(summary.status, 200);
+  assert.equal(summary.json.usage.total_tokens, 123);
+  assert.equal(summary.json.usage.input_audio_tokens, 30);
+  const attempt = summary.json.attempts.find(
+    (a) => a.attempt_id === next.json.drill.attempt_id,
+  );
+  assert.equal(attempt?.usage?.total_tokens, 123);
+
+  const usage = await http<{
+    session: { total_tokens: number };
+    by_source: { source: string; total_tokens: number }[];
+    by_attempt: { attempt_id: string; total_tokens: number }[];
+  }>("GET", `/api/usage/summary?session_id=${sid}`);
+  assert.equal(usage.status, 200);
+  assert.equal(usage.json.session.total_tokens, 123);
+  assert.ok(
+    usage.json.by_source.some(
+      (s) => s.source === "realtime_response" && s.total_tokens === 123,
+    ),
+  );
+  assert.ok(
+    usage.json.by_attempt.some(
+      (a) => a.attempt_id === next.json.drill.attempt_id && a.total_tokens === 123,
+    ),
+  );
+});
+
+test("realtime usage rejects wrong user", async () => {
+  const sess = await http<{ session: { id: string } }>(
+    "POST",
+    "/api/drill-sessions",
+    {},
+  );
+  const sid = sess.json.session.id;
+  const wrong = await fetch(`${base}/api/realtime/usage`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-user-id": "different-user",
+    },
+    body: JSON.stringify({
+      session_id: sid,
+      source: "realtime_response",
+      response_id: "resp_wrong_user",
+      usage: { total_tokens: 1 },
+    }),
+  });
+  assert.equal(wrong.status, 403);
 });
 
 test("POST /api/drills/import round-trips with export.yaml", async () => {

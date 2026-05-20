@@ -37,6 +37,12 @@ audit into one command.
   (dev:doctor → verify:drills --strict → build → tests → REST smoke →
   browser smoke → 4 realtime smokes) with a pass/fail table and timing.
   `--offline-only` skips the realtime layer for fast iteration.
+- **`scripts/smoke-helpers.mjs`** — shared `httpOk`, `waitForHttp`,
+  `delay`, `fetchWithTimeout` consumed by all three smoke scripts. Was
+  copy-pasted across drill-loop / browser / realtime smokes before;
+  dedupe means one place to fix any HTTP-readiness bug. Per-smoke
+  helpers (`startProcess` env handling, `fetchJson` headers/timeouts,
+  audio file selection) stay inline.
 - **`pnpm check`** — same offline subset, used by CI.
 - **Realtime smoke tiers** — `smoke:realtime` (≥ 1 tool call) ·
   `smoke:realtime:multi` (≥ 2 distinct) · `smoke:realtime:loop` (≥ 3

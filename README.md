@@ -107,8 +107,8 @@ pnpm --filter @drill/backend gen:drills -- --topic X --count N  # LLM Layer-3 dr
 pnpm dev:doctor      # environment diagnostic (Node, pnpm, env, sqlite, ports…)
 pnpm dev:reset       # wipe local SQLite + reseed (refuses while dev is running)
 pnpm verify:drills   # lint seeds/drills/*.yaml against the schema
-pnpm check           # build + tests + offline smokes (CI runs this)
-pnpm smoke:all       # every layer including realtime; ~5 min with OPENAI_API_KEY
+pnpm check           # build + tests + offline smokes (legacy alias)
+pnpm smoke:all       # CI gate (with --offline-only) and pre-release every-layer check (~5 min with OPENAI_API_KEY)
 ```
 
 ### Environment variables
@@ -278,6 +278,28 @@ Uses `OPENAI_GRADING_MODEL` (default `gpt-4.1-mini`).
 Review and activate drafts from the UI: click **Show drafts** in the header
 to see every `is_active=false` drill with rubric preview, then **Activate**
 to promote into the rotation pool or **Discard** to delete.
+
+### Layer-4 resource extraction (beyond LOCAL.md §9 — optional)
+
+Pulls Markdown from GitHub repos listed in
+`apps/backend/seeds/resources.yaml`, splits sections, and emits draft
+drills (`is_active=false`). Useful for bootstrapping a topic area from a
+canonical reference doc. Skips the LLM round-trip if you want
+deterministic drafts to review by hand. Same activation flow as Layer 3.
+
+```bash
+# Phases: assess → extract → generate-drills → all
+pnpm extract:resources -- --phase all --resource system-design-primer
+pnpm extract:resources -- --phase all --limit 5 --dry-run    # preview, no writes
+pnpm import:resource-drafts                                   # latest run, all resources
+pnpm import:resource-drafts -- --resource system-design-primer --run 20260520T123456Z
+```
+
+Resource manifest lives at `.agents/skills/resource-extraction/resources.json`.
+Artifacts land under `data/resources/<slug>/<run-id>/` (gitignored): an
+`assessment.json`, `documents.jsonl`, and `draft_drills.yaml` round-trippable
+through the same Zod schema as Layer-1 seeds. `import:resource-drafts`
+defaults to `--run latest`, so the common case is just running it bare.
 
 ### Admin: rubric editor + dry-run grader (LOCAL.md §13)
 

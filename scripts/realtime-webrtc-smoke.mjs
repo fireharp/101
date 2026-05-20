@@ -5,6 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import {
+  delay,
+  fetchWithTimeout,
+  httpOk,
+  waitForHttp,
+} from "./smoke-helpers.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const backendUrl = process.env.BACKEND_URL ?? "http://localhost:4000";
@@ -513,42 +519,10 @@ async function withLeadSilence(file) {
   return padded;
 }
 
-async function httpOk(url) {
-  try {
-    const res = await fetchWithTimeout(url, 1000);
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function waitForHttp(url, maxMs) {
-  const start = Date.now();
-  while (Date.now() - start < maxMs) {
-    if (await httpOk(url)) return;
-    await delay(500);
-  }
-  throw new Error(`Timed out waiting for ${url}`);
-}
-
 async function fetchJson(url) {
   const res = await fetchWithTimeout(url, 5000);
   if (!res.ok) throw new Error(`${url} returned ${res.status}`);
   return res.json();
-}
-
-async function fetchWithTimeout(url, maxMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), maxMs);
-  try {
-    return await fetch(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function shutdown() {

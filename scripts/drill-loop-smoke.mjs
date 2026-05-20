@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { httpOk, waitForHttp } from "./smoke-helpers.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const useExistingBackend = process.env.USE_EXISTING_BACKEND === "1";
@@ -171,24 +172,6 @@ function startProcess(name, args, env) {
   return { name, child, tail };
 }
 
-async function httpOk(url) {
-  try {
-    const res = await fetchWithTimeout(url, 1000);
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function waitForHttp(url, maxMs) {
-  const start = Date.now();
-  while (Date.now() - start < maxMs) {
-    if (await httpOk(url)) return;
-    await delay(500);
-  }
-  throw new Error(`Timed out waiting for ${url}`);
-}
-
 async function postJson(url, headers, body) {
   const res = await fetch(url, {
     method: "POST",
@@ -209,20 +192,6 @@ async function fetchJson(url, headers = {}) {
     throw new Error(`${url} → ${res.status}: ${text.slice(0, 300)}`);
   }
   return res.json();
-}
-
-async function fetchWithTimeout(url, maxMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), maxMs);
-  try {
-    return await fetch(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function shutdown() {

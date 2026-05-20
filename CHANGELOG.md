@@ -43,7 +43,11 @@ audit into one command.
   dedupe means one place to fix any HTTP-readiness bug. Per-smoke
   helpers (`startProcess` env handling, `fetchJson` headers/timeouts,
   audio file selection) stay inline.
-- **`pnpm check`** — same offline subset, used by CI.
+- **`pnpm check`** — legacy alias for the offline subset (verify:drills →
+  build → tests → drill-loop smoke → browser smoke). Predates
+  `smoke:all`; kept for muscle memory but CI uses
+  `smoke:all --offline-only` (stricter: adds `dev:doctor`,
+  `verify:drills --strict`).
 - **Realtime smoke tiers** — `smoke:realtime` (≥ 1 tool call) ·
   `smoke:realtime:multi` (≥ 2 distinct) · `smoke:realtime:loop` (≥ 3
   including `get_next_drill` — proves autonomy) ·

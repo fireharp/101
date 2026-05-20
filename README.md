@@ -442,16 +442,16 @@ Three layers, fastest to slowest:
 | Realtime multi-turn | `pnpm smoke:realtime:multi` | same harness, longer wait (~90 s), asserts **≥ 2 distinct** tool calls — proves the agent runs the actual drill loop (e.g. `submit_answer_transcript` then `grade_attempt`) rather than just calling `get_next_drill` once and stopping. |
 | Realtime autonomy | `pnpm smoke:realtime:loop` | strictest — wait up to ~2 min, asserts **≥ 3 total tool calls including `get_next_drill`**. Proves the agent calls `submit_answer_transcript` → `grade_attempt` → `get_next_drill` autonomously. Verifies LOCAL.md §18 ("backend owns curriculum, model drives it"). |
 
-Run everything offline in one shot:
+Run everything offline in one shot — exactly what CI runs:
 
 ```bash
-pnpm check          # verify drill YAML + build + tests + REST smoke + browser smoke
+pnpm smoke:all --offline-only   # doctor + verify:drills --strict + build + tests + REST smoke + browser smoke
 ```
 
 Or run **all** smokes (offline + realtime) with a pass/fail summary:
 
 ```bash
-pnpm smoke:all                 # 9 layers, ~5 minutes; needs OPENAI_API_KEY
+pnpm smoke:all                 # 10 layers, ~5 minutes; needs OPENAI_API_KEY
 pnpm smoke:all --offline-only  # skip the 4 realtime smokes
 ```
 

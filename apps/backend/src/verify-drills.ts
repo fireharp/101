@@ -1,8 +1,8 @@
 /**
  * Lints every seed YAML file in `seeds/drills/*.yaml` against the canonical
- * drill schema (LOCAL.md §16). Used in CI / `pnpm check` to catch malformed
- * drills before the server boots — otherwise the seed loader just emits a
- * `console.warn` and skips them silently.
+ * drill schema (LOCAL.md §16). Used in CI / `pnpm smoke:all` to catch
+ * malformed drills before the server boots — otherwise the seed loader
+ * just emits a `console.warn` and skips them silently.
  *
  * Two levels:
  *   - **errors** — schema violation, duplicate id, YAML parse failure.

@@ -122,6 +122,10 @@ pnpm smoke:all       # CI gate (with --offline-only) and pre-release every-layer
 | `OPENAI_REALTIME_TRANSCRIPTION_MODEL` | `gpt-4o-mini-transcribe` | ASR model for user audio transcript events |
 | `OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE` | — | optional language hint, e.g. `en` |
 | `OPENAI_GRADING_MODEL` | `gpt-4.1-mini` | text grading after attempt |
+| `OPENAI_REALTIME_PROMPT_ID` | — | optional Playground prompt id; when set, the backend sends `prompt: { id }` instead of inlining `DRILL_COACH_INSTRUCTIONS` |
+| `OPENAI_REALTIME_PROMPT_VERSION` | — | optional version pin for the Playground prompt above; bump after iterating on `seeds/realtime-prompt.md` |
+| `OPENAI_REALTIME_VOICE_SPEED` | `1.25` | clamped to `[0.25, 1.5]`; higher = faster speech |
+| `OPENAI_REALTIME_TOKEN_ATTEMPTS` | `3` | retry budget for the `client_secrets` mint on retryable upstream errors |
 | `REALTIME_VOICE` | `marin` | voice id |
 | `FRONTEND_ORIGIN` | `http://localhost:5173` | CORS allowlist |
 | `USE_OFFLINE_GRADER` | `0` | `1` → deterministic keyword grader (no API call) |
@@ -281,11 +285,16 @@ to promote into the rotation pool or **Discard** to delete.
 
 ### Layer-4 resource extraction (beyond LOCAL.md §9 — optional)
 
-Pulls Markdown from GitHub repos listed in
-`apps/backend/seeds/resources.yaml`, splits sections, and emits draft
-drills (`is_active=false`). Useful for bootstrapping a topic area from a
+Pulls Markdown from GitHub repos listed in the resource manifest
+(see path below), splits sections, and emits draft drills
+(`is_active=false`). Useful for bootstrapping a topic area from a
 canonical reference doc. Skips the LLM round-trip if you want
 deterministic drafts to review by hand. Same activation flow as Layer 3.
+
+Set `GITHUB_TOKEN` in `.env` to raise the GitHub API rate limit from
+60/hr (anonymous) to 5000/hr (authenticated). Any `repo`-scope or
+`public_repo`-scope token is enough — the pipeline only reads public
+files.
 
 ```bash
 # Phases: assess → extract → generate-drills → all
@@ -458,17 +467,18 @@ pnpm smoke:all --offline-only  # skip the 4 realtime smokes
 Sample output:
 
 ```
-▶ verify:drills…✓ verify:drills (0.5s)
-▶ build…✓ build (1.8s)
-▶ test (unit + route)…✓ test (unit + route) (0.9s)
-▶ smoke:drill-loop…✓ smoke:drill-loop (1.4s)
+▶ dev:doctor…✓ dev:doctor (0.8s)
+▶ verify:drills --strict…✓ verify:drills --strict (0.5s)
+▶ build…✓ build (1.4s)
+▶ test (backend unit + route, frontend pure)…✓ test (backend unit + route, frontend pure) (2.0s)
+▶ smoke:drill-loop…✓ smoke:drill-loop (1.3s)
 ▶ smoke:browser…✓ smoke:browser (2.7s)
 ▶ smoke:realtime…✓ smoke:realtime (62.0s)
 ▶ smoke:realtime:multi…✓ smoke:realtime:multi (67.8s)
 ▶ smoke:realtime:loop…✓ smoke:realtime:loop (73.9s)
 ▶ smoke:realtime:end…✓ smoke:realtime:end (77.2s)
 
-9/9 passed
+10/10 passed
 ```
 
 You can run the drill linter on its own:

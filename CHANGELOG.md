@@ -23,9 +23,12 @@ audit into one command.
   test that asserts every API-emitted timestamp matches the ISO regex.
 
 - **`pnpm dev:doctor`** — environment diagnostic: Node, pnpm, env file,
-  `OPENAI_API_KEY`, `better-sqlite3` native binding (the most common
-  fresh-clone breakage), DB writability, port availability, Playwright
-  chromium presence, drill seed dir. 12 checks, each with a fix hint.
+  `OPENAI_API_KEY`, `OPENAI_REALTIME_PROMPT_ID`, effective grader mode
+  (live LLM vs offline, accounting for `USE_OFFLINE_GRADER` override),
+  `better-sqlite3` native binding (the most common fresh-clone
+  breakage), DB writability, port availability, Playwright chromium
+  presence, `node_modules` present, drill seed dir (with drill count
+  and topic count). 13 checks, each with a fix hint.
 - **`pnpm dev:reset`** — wipes the local SQLite + `-wal` / `-shm` /
   `-journal` siblings and re-seeds from YAML. Refuses if a dev backend
   is listening on `PORT`.

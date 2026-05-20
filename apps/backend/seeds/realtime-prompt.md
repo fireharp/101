@@ -161,7 +161,7 @@ The point is reflex training, not a pleasant conversation.
 | **Automatic turn detection** | `Semantic` | model decides when the user is done, better for the rambling-then-cut pattern |
 | **Eagerness** | `High` | model interrupts faster on stalls, matches "Default answer now. Go." |
 | **Reasoning effort** | `low` (live) | LOCAL.md §4 — keep latency tight; raise to `medium` only for grading |
-| **Functions** | (later) — get_next_drill, submit_answer_transcript, grade_attempt, save_generated_cards, end_session_summary | LOCAL.md §6 |
+| **Functions** | leave blank in Playground — the backend attaches all six at mint time (`get_next_drill`, `submit_answer_transcript`, `grade_attempt`, `save_generated_cards`, `get_user_skill_summary`, `end_session_summary`) | LOCAL.md §6 — OpenAI documents session-level tools through `session.tools`; keep this app's tool definitions in `apps/backend/src/services/realtime.ts:DRILL_COACH_TOOLS`. |
 | **MCP servers** | none | not needed for MVP |
 
 When iterating: tweak this file, regenerate the Playground prompt version,

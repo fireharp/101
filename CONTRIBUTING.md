@@ -39,7 +39,7 @@ single line with a fix hint when it warns or fails.
 When in doubt:
 
 ```bash
-pnpm check            # build + tests + offline smokes — same as CI
+pnpm smoke:all --offline-only    # build + tests + offline smokes — exactly what CI runs
 ```
 
 Need to start over with a clean drill bank and no accumulated session
@@ -128,9 +128,9 @@ The fastest path is Layer 1 (YAML seed):
 5. `pnpm smoke:browser` should still pass — your drill might or might not
    be picked, but rotation continues.
 
-`pnpm check` runs `verify:drills` first so CI catches bad YAML before
-booting the server (otherwise the seed loader just logs a `console.warn`
-and skips).
+`pnpm smoke:all --offline-only` runs `verify:drills --strict` first so CI
+catches bad YAML before booting the server (otherwise the seed loader
+just logs a `console.warn` and skips).
 
 For Layer 2 templates: edit `apps/backend/seeds/templates/*.yaml` and run
 `pnpm --filter @drill/backend seed:templates`. For Layer 3 LLM drafts:

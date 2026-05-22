@@ -13,6 +13,11 @@ process.env.DATABASE_PATH = path.join(
 process.env.OPENAI_API_KEY = "";
 process.env.USE_OFFLINE_GRADER = "1";
 process.env.PORT = "0"; // unused — we listen on ephemeral
+// ELEVENLABS_* may leak from the workspace .env via dotenv when config.ts
+// loads — clear them here so the new tests cover the actually-missing
+// configuration paths.
+process.env.ELEVENLABS_API_KEY = "";
+process.env.ELEVENLABS_AGENT_ID = "";
 
 const { runMigrations } = await import("../db/migrations.js");
 const { drills } = await import("../db/repo.js");
@@ -1489,4 +1494,53 @@ test("realtime token endpoint returns 503 without OPENAI_API_KEY", async () => {
   const r = await http<{ error?: string }>("POST", "/api/realtime/token", {});
   assert.equal(r.status, 503);
   assert.match(r.json.error ?? "", /OPENAI_API_KEY/);
+});
+
+test("GET /api/health exposes ElevenLabs provider flags", async () => {
+  const r = await http<{
+    elevenlabs_configured: boolean;
+    elevenlabs_api_key_present: boolean;
+    voice_provider: string;
+  }>("GET", "/api/health");
+  assert.equal(r.status, 200);
+  // ELEVENLABS_API_KEY is intentionally unset for this test process, so
+  // both ElevenLabs flags should be false and the default provider is
+  // still openai.
+  assert.equal(r.json.elevenlabs_api_key_present, false);
+  assert.equal(r.json.elevenlabs_configured, false);
+  assert.equal(r.json.voice_provider, "openai");
+});
+
+test("elevenlabs conversation-token returns 503 without ELEVENLABS_API_KEY", async () => {
+  const r = await http<{ error?: string }>(
+    "POST",
+    "/api/elevenlabs/conversation-token",
+    {},
+  );
+  assert.equal(r.status, 503);
+  assert.match(r.json.error ?? "", /ELEVENLABS_API_KEY/);
+});
+
+test("elevenlabs conversation-token returns 503 when agent id missing", async () => {
+  // Set the key but leave the agent id empty to exercise the second
+  // 503 branch — actionable error pointing at `pnpm elevenlabs:setup`.
+  const previousKey = process.env.ELEVENLABS_API_KEY;
+  const previousId = process.env.ELEVENLABS_AGENT_ID;
+  process.env.ELEVENLABS_API_KEY = "el_test_key";
+  process.env.ELEVENLABS_AGENT_ID = "";
+  try {
+    const r = await http<{ error?: string }>(
+      "POST",
+      "/api/elevenlabs/conversation-token",
+      {},
+    );
+    assert.equal(r.status, 503);
+    assert.match(r.json.error ?? "", /ELEVENLABS_AGENT_ID/);
+    assert.match(r.json.error ?? "", /elevenlabs:setup/);
+  } finally {
+    if (previousKey === undefined) delete process.env.ELEVENLABS_API_KEY;
+    else process.env.ELEVENLABS_API_KEY = previousKey;
+    if (previousId === undefined) delete process.env.ELEVENLABS_AGENT_ID;
+    else process.env.ELEVENLABS_AGENT_ID = previousId;
+  }
 });

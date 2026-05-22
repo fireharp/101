@@ -95,6 +95,8 @@ async function main() {
     });
 
     await page.goto(frontendUrl, { waitUntil: "domcontentloaded" });
+    await page.getByTestId("voice-provider-elevenlabs").click();
+    await page.getByTestId("voice-provider-openai").click();
 
     await page.getByRole("button", { name: "Start session" }).click();
     await page.getByTestId("question").waitFor({ state: "visible", timeout: 10000 });

@@ -86,6 +86,14 @@ export interface RealtimeToken {
   voice: string;
 }
 
+export interface ElevenLabsConversationToken {
+  token: string;
+  agent_id: string;
+  expires_at: number | null;
+}
+
+export type VoiceProvider = "openai" | "elevenlabs";
+
 export type VadMode = "server_vad" | "semantic_vad";
 export type SemanticVadEagerness = "low" | "medium" | "high" | "auto";
 
@@ -139,6 +147,8 @@ export type ApiErrorPayload = {
   request_id?: string;
   openai_request_id?: string | null;
   openai_status?: number;
+  elevenlabs_request_id?: string | null;
+  elevenlabs_status?: number;
   retryable?: boolean;
   retry_after?: string | null;
 };
@@ -213,8 +223,19 @@ function parseErrorPayload(text: string): ApiErrorPayload | null {
 
 export const api = {
   health: () =>
-    jsonFetch<{ ok: boolean; drills: number; openai_configured: boolean }>(
-      "/api/health",
+    jsonFetch<{
+      ok: boolean;
+      drills: number;
+      openai_configured: boolean;
+      elevenlabs_configured?: boolean;
+      elevenlabs_api_key_present?: boolean;
+      voice_provider?: VoiceProvider;
+    }>("/api/health"),
+
+  elevenLabsConversationToken: () =>
+    jsonFetch<ElevenLabsConversationToken>(
+      "/api/elevenlabs/conversation-token",
+      { method: "POST", body: "{}" },
     ),
 
   startSession: (mode: Mode) =>

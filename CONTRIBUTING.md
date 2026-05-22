@@ -93,6 +93,8 @@ engines/
 | Realtime multi-turn | `pnpm smoke:realtime:multi` | Local only — proves ≥ 2 distinct tool calls. |
 | Realtime autonomy | `pnpm smoke:realtime:loop` | Local only — proves ≥ 3 calls incl. `get_next_drill`. |
 | Realtime stop | `pnpm smoke:realtime:end` | Local only — proves `end_session_summary` after "Stop". |
+| ElevenLabs token | `pnpm smoke:elevenlabs` | Local only — needs `ELEVENLABS_API_KEY` + a prior `pnpm elevenlabs:setup`. API-only by default; set `ELEVENLABS_SMOKE_BROWSER=1` for the live voice path. |
+| Voice provider compare | `pnpm smoke:voice:compare` | Local only — joins the latest `tmp/voice-benchmarks/openai-*.json` and `elevenlabs-*.json` reports into a side-by-side cost/latency report. |
 
 ### CI workflows
 

@@ -16,6 +16,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const backendUrl = process.env.BACKEND_URL ?? "http://localhost:4000";
 const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:5173";
 const timeoutMs = Number(process.env.REALTIME_SMOKE_TIMEOUT_MS ?? 90000);
+const reportDir = path.join(repoRoot, "tmp", "voice-benchmarks");
 
 const started = [];
 
@@ -331,26 +332,33 @@ async function main() {
     );
     await page.screenshot({ path: screenshot, fullPage: true });
     await page.getByRole("button", { name: "Stop session" }).click().catch(() => {});
+    const summary = {
+      ok: true,
+      provider: "openai",
+      timestamp: new Date().toISOString(),
+      model: "gpt-realtime-2",
+      sourceAudioFile,
+      audioFile,
+      audio_fixture: audio,
+      transcriptLength,
+      transcriptSource: transcript.source,
+      debugStatus: debug?.status ?? null,
+      debugErrors: debug?.errors ?? [],
+      questionAudioEventCount: questionAudioEvents.length,
+      toolCallCount: toolCalls.length,
+      toolNames: [...new Set(toolCalls.map((e) => e.state))].filter(Boolean),
+      recentEventTypes: (debug?.events ?? []).map((event) => event.type).slice(-25),
+      screenshot,
+      consoleMessages,
+      failures,
+    };
+    const benchmarkReport = await writeBenchmarkReport("openai", summary);
 
     console.log(
       JSON.stringify(
         {
-          ok: true,
-          sourceAudioFile,
-          audioFile,
-          audio,
-          transcriptLength,
-          transcriptSource: transcript.source,
-          debugStatus: debug?.status ?? null,
-          debugErrors: debug?.errors ?? [],
-          questionAudioEventCount: questionAudioEvents.length,
-          toolCallCount: toolCalls.length,
-          toolNames: [...new Set(toolCalls.map((e) => e.state))].filter(Boolean),
-          recentEventTypes: (debug?.events ?? []).map((event) => event.type).slice(-25),
-          rawFunctionCallEvents: debug?.rawFunctionCallEvents ?? [],
-          screenshot,
-          consoleMessages,
-          failures,
+          ...summary,
+          benchmarkReport,
         },
         null,
         2,
@@ -523,6 +531,13 @@ async function fetchJson(url) {
   const res = await fetchWithTimeout(url, 5000);
   if (!res.ok) throw new Error(`${url} returned ${res.status}`);
   return res.json();
+}
+
+async function writeBenchmarkReport(provider, report) {
+  await fs.mkdir(reportDir, { recursive: true });
+  const file = path.join(reportDir, `${provider}-${Date.now()}.json`);
+  await fs.writeFile(file, JSON.stringify(report, null, 2) + "\n");
+  return file;
 }
 
 function shutdown() {

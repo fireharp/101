@@ -31,4 +31,28 @@ export const config = {
   frontendOrigin: process.env.FRONTEND_ORIGIN ?? "http://localhost:5173",
   useOfflineGrader:
     process.env.USE_OFFLINE_GRADER === "1" || !process.env.OPENAI_API_KEY,
+
+  // ElevenLabs Agents — side-by-side voice provider (ELEVENLABS.md).
+  // Reads happen at request time via these getters, so an .env mutated by
+  // pnpm elevenlabs:setup picks up without a process restart.
+  get elevenLabsApiKey(): string {
+    return process.env.ELEVENLABS_API_KEY ?? "";
+  },
+  get elevenLabsAgentId(): string {
+    return process.env.ELEVENLABS_AGENT_ID ?? "";
+  },
+  get elevenLabsAgentName(): string {
+    return process.env.ELEVENLABS_AGENT_NAME ?? "Drill Coach (dev)";
+  },
+  get elevenLabsVoiceId(): string {
+    return process.env.ELEVENLABS_VOICE_ID ?? "";
+  },
+  get elevenLabsLlmModel(): string {
+    return process.env.ELEVENLABS_LLM_MODEL ?? "gpt-5.2";
+  },
+  get voiceProvider(): "openai" | "elevenlabs" {
+    return process.env.VOICE_PROVIDER === "elevenlabs"
+      ? "elevenlabs"
+      : "openai";
+  },
 };

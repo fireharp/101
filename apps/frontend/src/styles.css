@@ -57,6 +57,31 @@ button.primary:hover:not(:disabled) {
   filter: brightness(1.05);
 }
 
+.segmented-control {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0d1118;
+}
+
+.segmented-control button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.5rem 0.7rem;
+  color: var(--muted);
+}
+
+.segmented-control button + button {
+  border-left: 1px solid var(--border);
+}
+
+.segmented-control button.selected {
+  background: rgba(110, 168, 255, 0.16);
+  color: var(--text);
+}
+
 select {
   font: inherit;
   background: var(--panel);
@@ -67,12 +92,25 @@ select {
 }
 
 .app {
-  max-width: 1100px;
+  max-width: 1680px;
   margin: 0 auto;
   padding: 1.5rem 1.25rem 4rem;
   display: grid;
-  grid-template-columns: 1.4fr 1fr;
+  grid-template-columns:
+    minmax(520px, 1.35fr) minmax(320px, 0.9fr) minmax(300px, 0.8fr);
   gap: 1.25rem;
+  align-items: start;
+}
+
+@media (max-width: 1280px) {
+  .app {
+    max-width: 1180px;
+    grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.9fr);
+  }
+
+  .concept-panel {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 880px) {
@@ -105,6 +143,7 @@ header.app-header .status {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 1rem 1.1rem;
+  min-width: 0;
 }
 
 .panel h2 {
@@ -212,4 +251,133 @@ ul.missed li {
 .error {
   color: var(--bad);
   font-size: 0.85rem;
+}
+
+.concept-panel {
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+}
+
+.progress-panel {
+  order: 20;
+}
+
+.concept-panel-header {
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.6rem;
+}
+
+.concept-panel-header h2 {
+  margin: 0;
+}
+
+.concept-chip-row {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.85rem;
+}
+
+button.concept-chip {
+  padding: 0.16rem 0.55rem;
+  background: #0a0c12;
+}
+
+button.concept-chip.selected {
+  border-color: var(--accent);
+  color: var(--text);
+  background: rgba(110, 168, 255, 0.14);
+}
+
+.concept-detail {
+  display: grid;
+  gap: 0.7rem;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.concept-detail h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.concept-detail p {
+  margin: 0;
+}
+
+.concept-kicker {
+  color: var(--accent);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.concept-tags {
+  gap: 0.35rem;
+}
+
+.concept-block {
+  border-top: 1px solid var(--border);
+  padding-top: 0.65rem;
+}
+
+.concept-block strong {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.78rem;
+}
+
+.concept-block ul {
+  margin: 0;
+  padding-left: 1.05rem;
+}
+
+.concept-block li {
+  margin-bottom: 0.3rem;
+}
+
+.concept-references {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.concept-references a {
+  color: var(--accent);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.concept-references a:hover {
+  text-decoration: underline;
+}
+
+.zoom-term {
+  display: inline;
+  margin: 0;
+  padding: 0 0.14rem;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(110, 168, 255, 0.12);
+  color: var(--accent);
+  font: inherit;
+  line-height: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 0.15em;
+}
+
+.zoom-term:hover:not(:disabled) {
+  background: rgba(110, 168, 255, 0.2);
+}
+
+@media (max-width: 1280px) {
+  .concept-panel {
+    position: static;
+    max-height: none;
+  }
 }

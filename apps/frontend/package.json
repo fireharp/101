@@ -10,6 +10,7 @@
     "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
+    "@elevenlabs/client": "^1.7.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },

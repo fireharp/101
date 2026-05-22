@@ -1,8 +1,10 @@
 LOCAL.md
+ELEVENLABS.md
 .env
 .env.local
 .claude/*.local.md
 .coherence/
+tmp/voice-benchmarks/
 
 # yes we scraped it, but no reason to publish
 .agents/skills/exponent-questions/

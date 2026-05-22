@@ -6,6 +6,7 @@ import {
   useState,
   type CSSProperties,
   type Dispatch,
+  type ReactNode,
   type SetStateAction,
 } from "react";
 import {
@@ -18,12 +19,14 @@ import {
   type SessionPayload,
   type SessionSummary,
   type UsageSummary,
+  type VoiceProvider,
 } from "./api.ts";
 import {
   useRealtime,
   type RealtimeDebugEvent,
   type RealtimeMessage,
 } from "./useRealtime.ts";
+import { useElevenLabs } from "./useElevenLabs.ts";
 
 const MODES: { value: Mode; label: string }[] = [
   { value: "mixed", label: "Mixed" },
@@ -35,6 +38,7 @@ const MODES: { value: Mode; label: string }[] = [
 const AUTO_ADVANCE_SECONDS = 3;
 const REALTIME_SETTINGS_STORAGE_KEY = "drillCoachRealtimeSettings";
 const INTERACTION_MODE_STORAGE_KEY = "drillCoachInteractionMode";
+const VOICE_PROVIDER_STORAGE_KEY = "drillCoachVoiceProvider";
 type InteractionMode = "text" | "voice";
 const DEFAULT_REALTIME_SETTINGS: RealtimeSettings = {
   voice_speed: 1.25,
@@ -56,6 +60,799 @@ const kbdStyle: CSSProperties = {
   font: "inherit",
 };
 
+interface ConceptReference {
+  label: string;
+  href: string;
+}
+
+interface ConceptEntry {
+  id: string;
+  title: string;
+  subtitle: string;
+  aliases: string[];
+  tags: string[];
+  summary: string;
+  talkTrack: string[];
+  example: string;
+  references: ConceptReference[];
+}
+
+const CONCEPTS: ConceptEntry[] = [
+  {
+    id: "cache-stampede",
+    title: "Cache stampede / thundering herd",
+    subtitle: "failure mode",
+    aliases: [
+      "cache stampede",
+      "thundering herd",
+      "stampede",
+      "hammer the database",
+      "all miss",
+    ],
+    tags: ["caching", "traffic spike"],
+    summary:
+      "Many callers hit the same expired cache key, miss together, and all recompute or fetch from the database at once.",
+    talkTrack: [
+      "Name the failure: one hot key expires and turns normal traffic into a backend spike.",
+      "State the goal: collapse concurrent misses so only one expensive rebuild runs.",
+      "Then add a policy for the other callers: wait briefly, serve stale, or retry after the cache is refilled.",
+    ],
+    example:
+      "Product page key P123 expires. Ten thousand requests arrive. Without protection they all query Postgres; with protection one request rebuilds P123 and the rest wait or get the previous value.",
+    references: [
+      {
+        label: "Cloudflare: probabilistic cache stampede prevention",
+        href: "https://blog.cloudflare.com/sometimes-i-cache/",
+      },
+      {
+        label: "Optimal Probabilistic Cache Stampede Prevention paper",
+        href: "https://cseweb.ucsd.edu/~avattani/papers/cache_stampede.pdf",
+      },
+    ],
+  },
+  {
+    id: "single-flight",
+    title: "Single-flight",
+    subtitle: "duplicate suppression",
+    aliases: [
+      "single-flight",
+      "single flight",
+      "singleflight",
+      "duplicate suppression",
+      "coalesce concurrent misses",
+      "coalesce",
+      "coalescing",
+    ],
+    tags: ["caching", "concurrency"],
+    summary:
+      "Single-flight means concurrent callers for the same key share one in-flight operation instead of starting duplicates.",
+    talkTrack: [
+      "Use the cache key as the single-flight key.",
+      "The first miss starts the rebuild; later misses attach to that in-flight work.",
+      "When it completes, everyone receives the same result and the cache is filled once.",
+    ],
+    example:
+      "All requests for product P123 call singleFlight.do('product:P123', rebuild). Only the first request runs rebuild; the others receive its result.",
+    references: [
+      {
+        label: "Go singleflight package",
+        href: "https://pkg.go.dev/golang.org/x/sync/singleflight",
+      },
+    ],
+  },
+  {
+    id: "per-key-lock",
+    title: "Per-key lock",
+    subtitle: "mutual exclusion",
+    aliases: ["per-key lock", "per key lock", "lock", "locking", "mutex"],
+    tags: ["caching", "coordination"],
+    summary:
+      "A per-key lock serializes rebuilds for one cache key without blocking unrelated keys.",
+    talkTrack: [
+      "Do not use one global lock for the whole cache.",
+      "Lock product:P123 while rebuilding only that product key.",
+      "Set a timeout so a crashed rebuilder cannot block the key forever.",
+    ],
+    example:
+      "The lock name is cache-rebuild:product:P123. Requests for P124 can still rebuild independently.",
+    references: [
+      {
+        label: "Redis distributed locks",
+        href: "https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/",
+      },
+    ],
+  },
+  {
+    id: "rebuild-once",
+    title: "Rebuild once",
+    subtitle: "cache fill rule",
+    aliases: [
+      "rebuild once",
+      "rebuilds the value",
+      "fills the cache",
+      "one request rebuilds",
+    ],
+    tags: ["caching", "write path"],
+    summary:
+      "The expensive backend read or recomputation should run once, then publish the fresh value back into cache for everyone else.",
+    talkTrack: [
+      "Acquire the per-key guard before doing the expensive work.",
+      "Recheck the cache after acquiring the guard; another request may have already filled it.",
+      "Write the rebuilt value with a TTL before releasing the guard.",
+    ],
+    example:
+      "After winning the lock, request A rereads cache P123, still misses, queries Postgres once, writes cache P123, and releases.",
+    references: [
+      {
+        label: "Go singleflight package",
+        href: "https://pkg.go.dev/golang.org/x/sync/singleflight",
+      },
+    ],
+  },
+  {
+    id: "serve-stale",
+    title: "Wait or serve stale",
+    subtitle: "caller policy",
+    aliases: [
+      "others wait or serve stale",
+      "wait or serve stale",
+      "serve stale",
+      "serves stale",
+      "previous stale value",
+      "stale value",
+    ],
+    tags: ["availability", "latency"],
+    summary:
+      "When one request is rebuilding, other callers either wait for the fresh value or receive the last known good stale value.",
+    talkTrack: [
+      "Waiting gives fresher data but can add latency.",
+      "Serving stale protects latency and the database, but users may see older data.",
+      "The right choice depends on whether freshness or availability matters more for this endpoint.",
+    ],
+    example:
+      "A product description can often be stale for 30 seconds. Inventory checkout probably should wait or fail closed instead.",
+    references: [
+      {
+        label: "RFC 5861 stale controls",
+        href: "https://www.rfc-editor.org/rfc/rfc5861",
+      },
+    ],
+  },
+  {
+    id: "probabilistic-refresh",
+    title: "Probabilistic refresh",
+    subtitle: "early refresh",
+    aliases: [
+      "probabilistic refresh",
+      "probabilistic early refresh",
+      "probabilistic early expiration",
+      "early refresh",
+      "refresh before expiry",
+    ],
+    tags: ["caching", "prevention"],
+    summary:
+      "Refresh starts before the hard TTL with a probability that rises near expiry, so one caller refreshes before the crowd arrives.",
+    talkTrack: [
+      "It prevents synchronized expiry instead of only reacting after expiry.",
+      "The refresh chance is low when the item is fresh and higher as it nears TTL.",
+      "It is useful for very hot keys where even a short expired window creates a spike.",
+    ],
+    example:
+      "At 90 percent of TTL, one request may refresh P123 in the background; by actual expiry the cache is already warm.",
+    references: [
+      {
+        label: "Cloudflare: Sometimes I Cache",
+        href: "https://blog.cloudflare.com/sometimes-i-cache/",
+      },
+      {
+        label: "Optimal Probabilistic Cache Stampede Prevention paper",
+        href: "https://cseweb.ucsd.edu/~avattani/papers/cache_stampede.pdf",
+      },
+    ],
+  },
+  {
+    id: "stale-while-revalidate",
+    title: "Stale-while-revalidate",
+    subtitle: "serve stale plus background refresh",
+    aliases: [
+      "stale-while-revalidate",
+      "stale while revalidate",
+      "swr",
+      "background revalidation",
+      "revalidate",
+    ],
+    tags: ["http cache", "latency"],
+    summary:
+      "A stale value can be served immediately while a background task refreshes the cache for the next caller.",
+    talkTrack: [
+      "The user gets a fast response from the last known good value.",
+      "A background refresh updates the cache asynchronously.",
+      "Bound the stale window so broken refreshes do not serve old data forever.",
+    ],
+    example:
+      "Cache-Control: max-age=60, stale-while-revalidate=300 means fresh for 60 seconds, then stale can be served while refresh happens for up to 5 minutes.",
+    references: [
+      {
+        label: "RFC 5861 stale-while-revalidate",
+        href: "https://www.rfc-editor.org/rfc/rfc5861",
+      },
+    ],
+  },
+  {
+    id: "ttl-jitter",
+    title: "TTL jitter",
+    subtitle: "expiry spreading",
+    aliases: ["ttl jitter", "jitter", "randomized ttl", "spread expirations"],
+    tags: ["caching", "prevention"],
+    summary:
+      "TTL jitter adds a small random offset to expirations so many keys do not expire at the exact same time.",
+    talkTrack: [
+      "It spreads load across time when many related keys are written together.",
+      "It is complementary to single-flight; jitter reduces spikes, single-flight handles the remaining misses.",
+      "Keep the jitter small enough that business freshness guarantees still hold.",
+    ],
+    example:
+      "Instead of every product key expiring at 300 seconds, use 270-330 seconds so rebuilds are spread out.",
+    references: [
+      {
+        label: "Cloudflare cache stampede article",
+        href: "https://blog.cloudflare.com/sometimes-i-cache/",
+      },
+    ],
+  },
+  {
+    id: "k8s-liveness-readiness",
+    title: "Liveness vs readiness probes",
+    subtitle: "kubernetes health checks",
+    aliases: [
+      "liveness vs readiness",
+      "liveness readiness",
+      "liveness probe",
+      "liveness probes",
+      "readiness probe",
+      "readiness probes",
+      "health checks",
+      "probes",
+    ],
+    tags: ["kubernetes", "availability"],
+    summary:
+      "Liveness decides whether Kubernetes should restart a container; readiness decides whether the pod should receive traffic.",
+    talkTrack: [
+      "A slow response under load is usually a readiness or capacity signal, not proof the process is dead.",
+      "Use readiness to pull an overloaded pod out of service without restarting it.",
+      "Reserve liveness for unrecoverable stuck states where a restart is actually helpful.",
+    ],
+    example:
+      "/healthz can stay liveness-only and check the process loop. /ready can fail when dependencies, queues, or load make the pod unable to serve traffic.",
+    references: [
+      {
+        label: "Kubernetes: Liveness, Readiness, and Startup Probes",
+        href: "https://kubernetes.io/docs/concepts/workloads/pods/probes/",
+      },
+    ],
+  },
+  {
+    id: "k8s-probe-thresholds",
+    title: "Probe thresholds and timeouts",
+    subtitle: "probe tuning",
+    aliases: [
+      "probe sizing",
+      "probe timeout",
+      "probe timeout is",
+      "timeoutSeconds",
+      "timeout seconds",
+      "periodSeconds",
+      "period 5 seconds",
+      "failureThreshold",
+      "failure threshold",
+      "3 failures",
+      "generous thresholds",
+      "aggressive timeout",
+      "1-second timeout",
+      "one second timeout",
+      "5 seconds under load",
+    ],
+    tags: ["kubernetes", "timeouts"],
+    summary:
+      "Probe timing controls how quickly Kubernetes declares failure. Too-aggressive liveness timing can create restart loops during normal load.",
+    talkTrack: [
+      "Compute the restart window as roughly timeoutSeconds plus failureThreshold times periodSeconds.",
+      "If the app sometimes takes 5 seconds under load, a 1-second liveness timeout is too strict.",
+      "Make liveness slower and stricter about true deadlock; use readiness for fast traffic shedding.",
+    ],
+    example:
+      "With timeoutSeconds=1, periodSeconds=5, failureThreshold=3, three slow checks can restart a pod even when the app would have recovered.",
+    references: [
+      {
+        label: "Kubernetes: Configure probes",
+        href: "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/",
+      },
+    ],
+  },
+  {
+    id: "k8s-startup-probe",
+    title: "Startup probe",
+    subtitle: "cold-start guard",
+    aliases: [
+      "startupProbe",
+      "startupprobe",
+      "startup probe",
+      "startup probes",
+      "cold start",
+      "cold starts",
+      "initialization",
+    ],
+    tags: ["kubernetes", "startup"],
+    summary:
+      "A startup probe gives slow-starting containers a separate startup window before liveness and readiness probes take over.",
+    talkTrack: [
+      "Use it when cold starts are slower than steady-state health checks.",
+      "Until startup succeeds, Kubernetes does not run liveness or readiness for that container.",
+      "After startup succeeds, normal liveness can be tighter because it no longer has to cover cold start.",
+    ],
+    example:
+      "A service that warms caches for 45 seconds can use a startupProbe budget long enough for warmup, then use liveness only for deadlocks.",
+    references: [
+      {
+        label: "Kubernetes: Startup probe behavior",
+        href: "https://kubernetes.io/docs/concepts/workloads/pods/probes/",
+      },
+    ],
+  },
+  {
+    id: "transactional-outbox",
+    title: "Transactional outbox",
+    subtitle: "dual-write fix",
+    aliases: [
+      "transactional outbox",
+      "outbox pattern",
+      "outbox in same transaction",
+      "outbox row",
+      "outbox rows",
+      "outbox",
+      "dual-write",
+      "dual write",
+      "db write and an outbox row",
+      "same db transaction",
+      "same transaction",
+    ],
+    tags: ["messaging", "consistency"],
+    summary:
+      "The database state change and a durable outbox event row are written atomically in one DB transaction.",
+    talkTrack: [
+      "Do not try to atomically commit Postgres and Kafka directly from app code.",
+      "Write the business row and the outbox row in the same database transaction.",
+      "A separate relay later publishes the outbox row to Kafka, so a crash cannot lose the event after the DB commit.",
+    ],
+    example:
+      "Create order O123 and insert outbox event order.created in the same Postgres transaction. If the service crashes after commit, the relay still finds the row and publishes it.",
+    references: [
+      {
+        label: "Microservices.io: Transactional outbox",
+        href: "https://microservices.io/patterns/data/transactional-outbox.html",
+      },
+    ],
+  },
+  {
+    id: "outbox-relay",
+    title: "Outbox relay process",
+    subtitle: "publisher loop",
+    aliases: [
+      "relay process",
+      "separate relay process",
+      "separate publisher",
+      "publisher reads the outbox",
+      "reads unpublished outbox rows",
+      "marking them sent",
+      "marks them sent",
+      "published outbox rows",
+      "unpublished outbox rows",
+      "replay service",
+      "replaying",
+    ],
+    tags: ["messaging", "kafka"],
+    summary:
+      "The relay is a worker that reads unsent outbox rows, publishes them to Kafka, and records success.",
+    talkTrack: [
+      "The request path only commits to Postgres; it does not need Kafka to be up at that instant.",
+      "The relay can retry failed publishes until Kafka accepts the event.",
+      "Mark rows sent only after publish succeeds, and expect occasional duplicate publishes around crashes.",
+    ],
+    example:
+      "A relay polls outbox where sent_at is null, publishes each event, then updates sent_at. If it crashes after publish but before sent_at, it may publish that event again.",
+    references: [
+      {
+        label: "Debezium: Outbox event router",
+        href: "https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html",
+      },
+    ],
+  },
+  {
+    id: "idempotent-consumers",
+    title: "Idempotent consumers",
+    subtitle: "duplicate safety",
+    aliases: [
+      "idempotent consumers",
+      "consumer idempotent",
+      "consumers idempotent",
+      "idempotent",
+      "at-least-once",
+      "at least once",
+      "duplicates",
+      "duplicate delivery",
+      "without side effects",
+    ],
+    tags: ["messaging", "retries"],
+    summary:
+      "Consumers must handle duplicate events because outbox relays and Kafka-style delivery are usually at-least-once.",
+    talkTrack: [
+      "Outbox protects against losing events, not against seeing the same event twice.",
+      "Give each event a stable id and have consumers dedupe or make writes naturally idempotent.",
+      "This is the tradeoff: reliable delivery plus duplicate tolerance.",
+    ],
+    example:
+      "The billing consumer stores processed_event_ids. If order.created event e7 arrives twice, the second copy is acknowledged without charging again.",
+    references: [
+      {
+        label: "Microservices.io: Idempotent consumer",
+        href: "https://microservices.io/patterns/communication-style/idempotent-consumer.html",
+      },
+    ],
+  },
+  {
+    id: "cdc-outbox",
+    title: "CDC as outbox relay",
+    subtitle: "log-based publishing",
+    aliases: [
+      "cdc",
+      "debezium",
+      "alternative relay",
+      "cdc tools",
+      "log-based",
+    ],
+    tags: ["messaging", "cdc"],
+    summary:
+      "Change data capture can publish committed outbox rows by reading the database log instead of polling the table.",
+    talkTrack: [
+      "The app still writes an outbox row in the same transaction.",
+      "CDC observes the committed row from the database log and emits it to Kafka.",
+      "This can reduce custom relay code, but you still design consumers for at-least-once delivery.",
+    ],
+    example:
+      "Debezium reads the Postgres WAL, sees an inserted outbox row, routes it to the right Kafka topic, and preserves commit order per aggregate when configured that way.",
+    references: [
+      {
+        label: "Debezium outbox event router",
+        href: "https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html",
+      },
+    ],
+  },
+  {
+    id: "http-connection-reuse",
+    title: "HTTP keep-alive and connection reuse",
+    subtitle: "reuse TCP/TLS",
+    aliases: [
+      "keep-alive",
+      "keep alive",
+      "connection reuse",
+      "reuse tcp tls connections",
+      "reuse tcp+tls connections",
+      "reusing connections",
+      "reuse connections",
+      "tcp+tls connections",
+      "tcp tls connections",
+    ],
+    tags: ["http", "latency"],
+    summary:
+      "Keep-alive reuses an existing TCP/TLS connection so each request does not pay setup and handshake cost again.",
+    talkTrack: [
+      "For high RPS HTTPS calls, a fresh connection per request wastes RTTs and CPU.",
+      "Reuse existing connections with keep-alive or a client connection pool.",
+      "Measure p99 latency before and after; the win is often removing repeated TCP/TLS setup.",
+    ],
+    example:
+      "Instead of 1000 requests opening 1000 TLS sessions, a client keeps a small set of warm connections to the same upstream and sends requests over them.",
+    references: [
+      {
+        label: "MDN: HTTP connection management",
+        href: "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Connection_management_in_HTTP_1.x",
+      },
+    ],
+  },
+  {
+    id: "connection-pool-sizing",
+    title: "Connection pool sizing",
+    subtitle: "bounded concurrency",
+    aliases: [
+      "connection pool",
+      "connection pooling",
+      "connection pool size",
+      "sized connection pool",
+      "client connection pool",
+      "per-host limits",
+    ],
+    tags: ["http client", "backpressure"],
+    summary:
+      "A connection pool should be large enough for useful parallelism and bounded so a slow downstream cannot consume unbounded resources.",
+    talkTrack: [
+      "Too small: callers queue behind too few connections and p99 rises.",
+      "Too large: the client can overload the downstream or exhaust local sockets.",
+      "Set per-host limits and timeouts, then tune from observed concurrency, latency, and error rates.",
+    ],
+    example:
+      "If the downstream is healthy at 100 concurrent requests but degrades at 400, cap the pool near the safe range and shed or queue excess work deliberately.",
+    references: [
+      {
+        label: "MDN: Persistent connections",
+        href: "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Connection_management_in_HTTP_1.x",
+      },
+    ],
+  },
+  {
+    id: "thread-pool-sizing",
+    title: "Thread pool sizing",
+    subtitle: "cpu vs io bound",
+    aliases: [
+      "thread pool",
+      "thread pools",
+      "worker pool",
+      "worker pools",
+      "pool size",
+      "size a worker pool",
+      "size the worker pool",
+      "sizing rule of thumb",
+      "bound the pool",
+      "bounded pool",
+      "50 and 200 threads",
+    ],
+    tags: ["concurrency", "performance"],
+    summary:
+      "Worker-pool size depends on whether work is CPU-bound or IO-bound; CPU-bound tracks cores, IO-bound can be larger because threads wait.",
+    talkTrack: [
+      "CPU-bound work should stay near core count because extra runnable threads mainly add context switching.",
+      "IO-bound work can use more threads because many are blocked waiting on network or disk.",
+      "Treat formulas as a starting point; measure under realistic load and keep the pool bounded.",
+    ],
+    example:
+      "On a 16-core box, CPU-bound hashing might use about 16 workers. IO-bound calls with 80 percent wait time may need many more, but still behind a queue and back-pressure.",
+    references: [
+      {
+        label: "Go blog: Concurrency is not parallelism",
+        href: "https://go.dev/blog/waza-talk",
+      },
+    ],
+  },
+  {
+    id: "cpu-vs-io-bound",
+    title: "CPU-bound vs IO-bound work",
+    subtitle: "capacity model",
+    aliases: [
+      "cpu-bound",
+      "cpu bound",
+      "io-bound",
+      "io bound",
+      "distinguish io vs cpu",
+      "wait/compute",
+      "wait compute",
+      "cores ×",
+      "cores x",
+      "number of cores",
+    ],
+    tags: ["concurrency", "sizing"],
+    summary:
+      "CPU-bound work consumes cores while it runs; IO-bound work spends much of its lifetime waiting for external systems.",
+    talkTrack: [
+      "For CPU-bound work, the scarce resource is CPU execution slots.",
+      "For IO-bound work, the scarce resource is often outstanding waits, so useful concurrency can exceed core count.",
+      "The wait/compute ratio explains why IO pools are often larger than CPU pools.",
+    ],
+    example:
+      "If each task computes for 10 ms and waits on IO for 90 ms, many threads can be waiting while a smaller number actively use CPU.",
+    references: [
+      {
+        label: "Little's law overview",
+        href: "https://en.wikipedia.org/wiki/Little%27s_law",
+      },
+    ],
+  },
+  {
+    id: "context-switch-cost",
+    title: "Context switch cost",
+    subtitle: "too many runnable threads",
+    aliases: [
+      "context switch",
+      "context switches",
+      "context switch cost",
+      "extra context switches",
+    ],
+    tags: ["cpu", "threads"],
+    summary:
+      "Too many runnable threads make the OS spend more time switching between them instead of doing useful work.",
+    talkTrack: [
+      "Extra threads do not create extra cores.",
+      "For CPU-heavy tasks, oversizing the pool increases scheduling overhead and cache disruption.",
+      "This is why CPU-bound worker pools usually start near core count.",
+    ],
+    example:
+      "A 16-core machine running 200 CPU-bound workers will spend more time competing for cores than a pool sized near 16.",
+    references: [
+      {
+        label: "Go blog: scheduler/concurrency intuition",
+        href: "https://go.dev/blog/waza-talk",
+      },
+    ],
+  },
+  {
+    id: "backpressure-queueing",
+    title: "Back-pressure and queueing",
+    subtitle: "bounded overload",
+    aliases: [
+      "back-pressure",
+      "backpressure",
+      "queueing",
+      "queuing",
+      "queue",
+      "bound or queue saturates",
+      "fail fast",
+      "resource exhaustion",
+      "oom",
+    ],
+    tags: ["reliability", "overload"],
+    summary:
+      "A bounded queue and back-pressure make overload explicit instead of allowing unbounded work to consume memory or threads.",
+    talkTrack: [
+      "A bounded pool needs a policy for excess work: queue briefly, reject, shed, or slow callers.",
+      "Unbounded queues hide overload until latency or memory explodes.",
+      "Back-pressure protects the service by making upstreams feel saturation.",
+    ],
+    example:
+      "When all 100 IO workers are busy, accept at most 1000 queued jobs; after that return 429 or shed low-priority work.",
+    references: [
+      {
+        label: "Reactive Streams: back pressure",
+        href: "https://www.reactive-streams.org/",
+      },
+    ],
+  },
+  {
+    id: "tls-handshake-cost",
+    title: "TLS handshake cost",
+    subtitle: "setup overhead",
+    aliases: [
+      "tls handshake",
+      "tls handshake cost",
+      "handshake cost",
+      "fresh handshakes",
+      "handshakes dominate",
+    ],
+    tags: ["https", "latency"],
+    summary:
+      "A TLS handshake negotiates keys and security parameters before application data flows; repeated handshakes can dominate tail latency.",
+    talkTrack: [
+      "HTTPS setup is not free: TCP connect plus TLS negotiation adds network round trips and CPU.",
+      "Connection reuse amortizes that cost over many requests.",
+      "If handshakes dominate p99, look for disabled keep-alive, low idle timeouts, or clients creating new transports per request.",
+    ],
+    example:
+      "A 20 ms API call can become 100 ms at p99 if every request also performs DNS, TCP connect, and TLS setup.",
+    references: [
+      {
+        label: "MDN: Transport Layer Security",
+        href: "https://developer.mozilla.org/en-US/docs/Web/Security/Transport_Layer_Security",
+      },
+    ],
+  },
+  {
+    id: "head-of-line-blocking",
+    title: "Head-of-line blocking",
+    subtitle: "queueing delay",
+    aliases: [
+      "head-of-line blocking",
+      "head of line blocking",
+      "hol blocking",
+      "line blocking",
+      "blocking when the downstream slows",
+    ],
+    tags: ["queues", "latency"],
+    summary:
+      "Head-of-line blocking happens when work at the front of a queue delays independent work behind it.",
+    talkTrack: [
+      "A pool creates a queue when all connections are busy.",
+      "If the downstream slows, callers behind slow requests wait even if they could otherwise proceed.",
+      "Bound the pool and add deadlines so queueing is explicit instead of silently growing p99.",
+    ],
+    example:
+      "With 10 pooled connections, 10 slow requests occupy the whole pool. The 11th request waits even if it would be quick once sent.",
+    references: [
+      {
+        label: "HTTP/3 explained: TCP head-of-line blocking",
+        href: "https://http3-explained.haxx.se/en/why-quic/why-tcphol",
+      },
+    ],
+  },
+];
+
+const CONCEPT_BY_ID = new Map(CONCEPTS.map((concept) => [concept.id, concept]));
+const CONCEPT_ALIAS_PAIRS = CONCEPTS.flatMap((concept) =>
+  [concept.title, ...concept.aliases].map((alias) => ({
+    alias,
+    normalized: normalizeConceptText(alias),
+    concept,
+  })),
+).sort((a, b) => b.normalized.length - a.normalized.length);
+const CONCEPT_BY_ALIAS = new Map(
+  CONCEPT_ALIAS_PAIRS.map((item) => [item.normalized, item.concept]),
+);
+const TERM_ALIAS_PATTERN = CONCEPT_ALIAS_PAIRS.filter(
+  (item) => item.normalized.length >= 5,
+)
+  .map((item) => escapeRegex(item.alias))
+  .join("|");
+const TERM_ALIAS_REGEX = new RegExp(
+  `(?<![A-Za-z0-9])(${TERM_ALIAS_PATTERN})(?![A-Za-z0-9])`,
+  "gi",
+);
+
+function normalizeConceptText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[-_/]+/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function findConceptForText(
+  text: string,
+  allowedConceptIds?: string[],
+): ConceptEntry | null {
+  const normalized = normalizeConceptText(text);
+  if (!normalized) return null;
+  const allowed = allowedConceptIds ? new Set(allowedConceptIds) : null;
+  const exact = CONCEPT_ALIAS_PAIRS.find(
+    (item) =>
+      item.normalized === normalized &&
+      (!allowed || allowed.has(item.concept.id)),
+  )?.concept;
+  if (exact) return exact;
+  const padded = ` ${normalized} `;
+  const fuzzy = CONCEPT_ALIAS_PAIRS.find(
+    (item) =>
+      item.normalized.length > 3 &&
+      (!allowed || allowed.has(item.concept.id)) &&
+      (padded.includes(` ${item.normalized} `) ||
+        ` ${item.normalized} `.includes(padded)),
+  );
+  return fuzzy?.concept ?? null;
+}
+
+function collectConceptIds(chunks: string[]): string[] {
+  const scores = new Map<string, number>();
+  chunks.forEach((chunk, chunkIndex) => {
+    const normalized = normalizeConceptText(chunk);
+    if (!normalized) return;
+    const padded = ` ${normalized} `;
+    for (const item of CONCEPT_ALIAS_PAIRS) {
+      if (item.normalized.length <= 3) continue;
+      const matchIndex = padded.indexOf(` ${item.normalized} `);
+      if (matchIndex === -1) continue;
+      const score = chunkIndex * 100_000 + matchIndex;
+      const previous = scores.get(item.concept.id);
+      if (previous === undefined || score < previous) {
+        scores.set(item.concept.id, score);
+      }
+    }
+  });
+  return [...scores.entries()]
+    .sort((a, b) => a[1] - b[1])
+    .map(([id]) => id);
+}
+
 export function App() {
   const [mode, setMode] = useState<Mode>("mixed");
   const [session, setSession] = useState<SessionPayload | null>(null);
@@ -65,10 +862,14 @@ export function App() {
   const [running, setRunning] = useState(false);
   const [grading, setGrading] = useState(false);
   const [grade, setGrade] = useState<GradeResult | null>(null);
+  const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [health, setHealth] = useState<{
     drills: number;
     openai_configured: boolean;
+    elevenlabs_configured: boolean;
+    elevenlabs_api_key_present: boolean;
+    voice_provider: VoiceProvider;
   } | null>(null);
   const [progress, setProgress] = useState<
     {
@@ -165,6 +966,9 @@ export function App() {
   const [interactionMode, setInteractionMode] = useState<InteractionMode>(
     readInteractionMode,
   );
+  const [voiceProvider, setVoiceProvider] = useState<VoiceProvider>(
+    readVoiceProvider,
+  );
   const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
   const [resuming, setResuming] = useState(false);
   const [eventsOpen, setEventsOpen] = useState(false);
@@ -223,15 +1027,22 @@ export function App() {
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const appliedRealtimeSettingsRef = useRef(JSON.stringify(realtimeSettings));
   const lastRealtimeTranscriptRef = useRef("");
-  const realtime = useRealtime();
+  const openaiRealtime = useRealtime();
+  const elevenLabsRealtime = useElevenLabs();
+  const realtime =
+    voiceProvider === "elevenlabs" ? elevenLabsRealtime : openaiRealtime;
   const voiceConnected = realtime.status === "connected";
   const voiceConnecting = realtime.status === "connecting";
   const voiceSessionActive = voiceConnected || voiceConnecting;
   const voicePolishEnabled = interactionMode === "voice";
   const voiceAutoAdvance = voicePolishEnabled;
-  const voiceCanStart = Boolean(health?.openai_configured) && !voiceSessionActive;
+  const voiceProviderReady =
+    voiceProvider === "elevenlabs"
+      ? Boolean(health?.elevenlabs_configured)
+      : Boolean(health?.openai_configured);
+  const voiceCanStart = voiceProviderReady && !voiceSessionActive;
   const voiceCanRetry = Boolean(
-    drill && voicePolishEnabled && health?.openai_configured && !voiceSessionActive,
+    drill && voicePolishEnabled && voiceProviderReady && !voiceSessionActive,
   );
   const usageLabel = usageSummary
     ? session
@@ -249,6 +1060,25 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem(INTERACTION_MODE_STORAGE_KEY, interactionMode);
   }, [interactionMode]);
+
+  useEffect(() => {
+    window.localStorage.setItem(VOICE_PROVIDER_STORAGE_KEY, voiceProvider);
+  }, [voiceProvider]);
+
+  useEffect(() => {
+    if (voiceProvider === "openai" && elevenLabsRealtime.status !== "idle") {
+      void elevenLabsRealtime.stop();
+    }
+    if (voiceProvider === "elevenlabs" && openaiRealtime.status !== "idle") {
+      void openaiRealtime.stop();
+    }
+  }, [
+    elevenLabsRealtime.status,
+    elevenLabsRealtime.stop,
+    openaiRealtime.status,
+    openaiRealtime.stop,
+    voiceProvider,
+  ]);
 
   useEffect(() => {
     const key = JSON.stringify(realtimeSettings);
@@ -340,6 +1170,9 @@ export function App() {
         setHealth({
           drills: h.drills,
           openai_configured: h.openai_configured,
+          elevenlabs_configured: Boolean(h.elevenlabs_configured),
+          elevenlabs_api_key_present: Boolean(h.elevenlabs_api_key_present),
+          voice_provider: h.voice_provider ?? "openai",
         }),
       )
       .catch((e) => setError((e as Error).message));
@@ -558,7 +1391,7 @@ export function App() {
       setDrillCount(1);
       startTimer();
       setUsageSummary(await api.usageSummary(s.id));
-      if (voicePolishEnabled && health?.openai_configured) {
+      if (voicePolishEnabled && voiceProviderReady) {
         await startVoiceForDrill(d);
       }
     } catch (e) {
@@ -566,12 +1399,12 @@ export function App() {
     }
   }, [
     clearAutoAdvance,
-    health?.openai_configured,
     interactionMode,
     mode,
     pressureMode,
     startTimer,
     startVoiceForDrill,
+    voiceProviderReady,
     voicePolishEnabled,
   ]);
 
@@ -586,7 +1419,7 @@ export function App() {
       setDrill(d);
       setDrillCount((c) => c + 1);
       startTimer();
-      if (voicePolishEnabled && health?.openai_configured) {
+      if (voicePolishEnabled && voiceProviderReady) {
         await startVoiceForDrill(d);
       }
     } catch (e) {
@@ -594,11 +1427,11 @@ export function App() {
     }
   }, [
     clearAutoAdvance,
-    health?.openai_configured,
     mode,
     session,
     startTimer,
     startVoiceForDrill,
+    voiceProviderReady,
     voicePolishEnabled,
   ]);
 
@@ -616,7 +1449,7 @@ export function App() {
       setDrill(d);
       setDrillCount((c) => c + 1);
       startTimer();
-      if (voicePolishEnabled && health?.openai_configured) {
+      if (voicePolishEnabled && voiceProviderReady) {
         await startVoiceForDrill(d);
       }
     } catch (e) {
@@ -625,10 +1458,10 @@ export function App() {
   }, [
     clearAutoAdvance,
     drill,
-    health?.openai_configured,
     session,
     startTimer,
     startVoiceForDrill,
+    voiceProviderReady,
     voicePolishEnabled,
   ]);
 
@@ -691,6 +1524,62 @@ export function App() {
     if (!grade) return "";
     return `verdict-${grade.verdict}`;
   }, [grade]);
+
+  const currentConceptIds = useMemo(() => {
+    const chunks: string[] = [];
+    if (drill) {
+      chunks.push(
+        drill.question_text,
+        drill.topic,
+        drill.subtopic,
+        ...drill.expected_answer_shape,
+        ...drill.rubric.must_have,
+        ...drill.rubric.nice_to_have,
+        ...drill.rubric.red_flags,
+      );
+    }
+    if (grade) {
+      chunks.push(
+        ...grade.missed_points,
+        grade.ideal_short_answer,
+        ...grade.cards.flatMap((card) => [card.front, card.back]),
+      );
+    }
+    return collectConceptIds(chunks);
+  }, [drill, grade]);
+
+  const activeConcept = useMemo(() => {
+    const selected = selectedConceptId && currentConceptIds.includes(selectedConceptId)
+      ? CONCEPT_BY_ID.get(selectedConceptId)
+      : null;
+    if (selected) return selected;
+    const firstCurrent = currentConceptIds[0];
+    return firstCurrent ? CONCEPT_BY_ID.get(firstCurrent) ?? null : null;
+  }, [currentConceptIds, selectedConceptId]);
+
+  useEffect(() => {
+    if (!grade) return;
+    if (currentConceptIds.length === 0) {
+      setSelectedConceptId(null);
+      return;
+    }
+    setSelectedConceptId((current) =>
+      current && currentConceptIds.includes(current)
+        ? current
+        : currentConceptIds[0] ?? null,
+    );
+  }, [currentConceptIds, grade]);
+
+  const selectConcept = useCallback((id: string) => {
+    setSelectedConceptId(id);
+  }, []);
+
+  const onSelectionZoom = useCallback(() => {
+    const selected = window.getSelection()?.toString().trim();
+    if (!selected || selected.length > 80) return;
+    const concept = findConceptForText(selected, currentConceptIds);
+    if (concept) selectConcept(concept.id);
+  }, [currentConceptIds, selectConcept]);
 
   const refreshSidecar = useCallback(async () => {
     try {
@@ -1179,7 +2068,7 @@ export function App() {
   );
 
   return (
-    <div className="app">
+    <div className="app" onMouseUp={onSelectionZoom} onKeyUp={onSelectionZoom}>
       <header className="app-header">
         <h1>GPT Realtime Interview Drill Coach</h1>
         <div className="row" style={{ gap: "0.5rem" }}>
@@ -1187,6 +2076,8 @@ export function App() {
             {health
               ? `${health.drills} drills · OpenAI ${
                   health.openai_configured ? "ready" : "missing key"
+                } · ElevenLabs ${
+                  health.elevenlabs_configured ? "ready" : "missing setup"
                 } · ${usageLabel} · cards ${cardStats.due}/${cardStats.total} due`
               : "..."}
           </div>
@@ -1277,7 +2168,7 @@ export function App() {
 
       {progress.length > 0 && (
         <div
-          className="panel"
+          className="panel progress-panel"
           data-testid="progress-strip"
           style={{ gridColumn: "1 / -1", padding: "0.6rem 1rem" }}
         >
@@ -1478,23 +2369,55 @@ export function App() {
                   </option>
                 ))}
               </select>
-              <button
-                data-testid="interaction-text"
-                onClick={() => setInteractionMode("text")}
-                className={interactionMode === "text" ? "primary" : undefined}
-                title="Cheap text-first drill mode."
+              <div
+                className="segmented-control"
+                role="group"
+                aria-label="Interaction mode"
               >
-                Text drill
-              </button>
-              <button
-                data-testid="interaction-voice"
-                onClick={() => setInteractionMode("voice")}
-                className={interactionMode === "voice" ? "primary" : undefined}
-                disabled={!health?.openai_configured}
-                title="Live voice polishing starts one drill at a time."
+                <button
+                  data-testid="interaction-text"
+                  onClick={() => setInteractionMode("text")}
+                  className={interactionMode === "text" ? "selected" : undefined}
+                  title="Cheap text-first drill mode."
+                >
+                  Text drill
+                </button>
+                <button
+                  data-testid="interaction-voice"
+                  onClick={() => setInteractionMode("voice")}
+                  className={interactionMode === "voice" ? "selected" : undefined}
+                  disabled={!voiceProviderReady}
+                  title="Live voice polishing starts one drill at a time."
+                >
+                  Live voice polish
+                </button>
+              </div>
+              <div
+                className="segmented-control"
+                role="group"
+                aria-label="Voice provider"
               >
-                Live voice polish
-              </button>
+                <button
+                  data-testid="voice-provider-openai"
+                  onClick={() => setVoiceProvider("openai")}
+                  className={voiceProvider === "openai" ? "selected" : undefined}
+                  disabled={voiceSessionActive}
+                  title="Use OpenAI Realtime for voice sessions."
+                >
+                  OpenAI Realtime
+                </button>
+                <button
+                  data-testid="voice-provider-elevenlabs"
+                  onClick={() => setVoiceProvider("elevenlabs")}
+                  className={
+                    voiceProvider === "elevenlabs" ? "selected" : undefined
+                  }
+                  disabled={voiceSessionActive}
+                  title="Use ElevenLabs Agents for voice sessions."
+                >
+                  ElevenLabs Agents
+                </button>
+              </div>
               <button className="primary" onClick={onStart}>
                 Start session
               </button>
@@ -1506,6 +2429,7 @@ export function App() {
                 debugEvents={realtime.debugEvents}
                 micLevel={realtime.micLevel}
                 active={false}
+                provider={voiceProvider}
               />
             </div>
           </>
@@ -1599,8 +2523,12 @@ export function App() {
                   setInteractionMode("voice");
                   void startVoiceForDrill(drill);
                 }}
-                disabled={!health?.openai_configured || voiceConnecting}
-                title="Start or stop live voice for this drill."
+                disabled={!voiceProviderReady || voiceConnecting}
+                title={`Start or stop live voice for this drill with ${
+                  voiceProvider === "elevenlabs"
+                    ? "ElevenLabs Agents"
+                    : "OpenAI Realtime"
+                }.`}
               >
                 {voiceConnected
                   ? "Stop voice"
@@ -1687,6 +2615,7 @@ export function App() {
               debugEvents={realtime.debugEvents}
               micLevel={realtime.micLevel}
               active={voiceSessionActive}
+              provider={voiceProvider}
             />
 
             <textarea
@@ -1731,8 +2660,13 @@ export function App() {
                   style={{ marginTop: "0.25rem", fontSize: "0.78rem" }}
                 >
                   Check microphone permission, that{" "}
-                  <code>OPENAI_API_KEY</code> is set on the backend, and that
-                  the page is over HTTPS or <code>localhost</code>. Click{" "}
+                  <code>
+                    {voiceProvider === "elevenlabs"
+                      ? "ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID"
+                      : "OPENAI_API_KEY"}
+                  </code>{" "}
+                  is set on the backend, and that the page is over HTTPS or{" "}
+                  <code>localhost</code>. Click{" "}
                   <em>Retry voice</em> to try again.
                 </div>
                 {realtime.debugEvents.length > 0 && (
@@ -1803,7 +2737,13 @@ export function App() {
                 </h3>
                 <ul className="missed">
                   {grade.missed_points.map((m, i) => (
-                    <li key={i}>{m}</li>
+                    <li key={i}>
+                      <TermText
+                        text={m}
+                        allowedConceptIds={currentConceptIds}
+                        onSelectConcept={selectConcept}
+                      />
+                    </li>
                   ))}
                 </ul>
               </>
@@ -1812,7 +2752,13 @@ export function App() {
             <h3 style={{ margin: "0.8rem 0 0.2rem", fontSize: "0.95rem" }}>
               Ideal short answer
             </h3>
-            <p style={{ margin: 0 }}>{grade.ideal_short_answer}</p>
+            <p style={{ margin: 0 }}>
+              <TermText
+                text={grade.ideal_short_answer}
+                allowedConceptIds={currentConceptIds}
+                onSelectConcept={selectConcept}
+              />
+            </p>
 
             {grade.cards.length > 0 && (
               <>
@@ -1821,8 +2767,20 @@ export function App() {
                 </h3>
                 {grade.cards.map((c, i) => (
                   <div className="card" key={i}>
-                    <div className="front">{c.front}</div>
-                    <div className="back">{c.back}</div>
+                    <div className="front">
+                      <TermText
+                        text={c.front}
+                        allowedConceptIds={currentConceptIds}
+                        onSelectConcept={selectConcept}
+                      />
+                    </div>
+                    <div className="back">
+                      <TermText
+                        text={c.back}
+                        allowedConceptIds={currentConceptIds}
+                        onSelectConcept={selectConcept}
+                      />
+                    </div>
                   </div>
                 ))}
               </>
@@ -1830,6 +2788,17 @@ export function App() {
           </>
         )}
       </aside>
+
+      <ConceptPanel
+        conceptIds={currentConceptIds}
+        activeConcept={activeConcept}
+        emptyMessage={
+          grade
+            ? "No matched talk-through terms for this drill yet."
+            : "Grade an answer to focus the current concepts."
+        }
+        onSelectConcept={selectConcept}
+      />
 
       {summary && (
         <section
@@ -2743,6 +3712,140 @@ export function App() {
   );
 }
 
+function ConceptPanel({
+  conceptIds,
+  activeConcept,
+  emptyMessage,
+  onSelectConcept,
+}: {
+  conceptIds: string[];
+  activeConcept: ConceptEntry | null;
+  emptyMessage: string;
+  onSelectConcept: (id: string) => void;
+}) {
+  const visibleConceptIds = conceptIds;
+  const firstVisibleConceptId = visibleConceptIds[0];
+  const concept =
+    activeConcept ??
+    (firstVisibleConceptId
+      ? CONCEPT_BY_ID.get(firstVisibleConceptId) ?? null
+      : null);
+
+  return (
+    <aside className="panel concept-panel" data-testid="concept-panel">
+      <div className="row concept-panel-header">
+        <h2>Talk-through</h2>
+        <span className="tag">zoom</span>
+      </div>
+      <div className="concept-chip-row" data-testid="concept-chips">
+        {visibleConceptIds.map((id) => {
+          const item = CONCEPT_BY_ID.get(id);
+          if (!item) return null;
+          return (
+            <button
+              key={id}
+              type="button"
+              className={`tag concept-chip ${concept?.id === id ? "selected" : ""}`}
+              onClick={() => onSelectConcept(id)}
+              aria-pressed={concept?.id === id}
+            >
+              {item.title}
+            </button>
+          );
+        })}
+      </div>
+      {concept ? (
+        <div className="concept-detail" data-testid="concept-detail">
+          <div className="concept-kicker">{concept.subtitle}</div>
+          <h3>{concept.title}</h3>
+          <div className="row concept-tags">
+            {concept.tags.map((tag) => (
+              <span key={tag} className="tag">
+                {tag}
+              </span>
+            ))}
+          </div>
+          <p>{concept.summary}</p>
+
+          <div className="concept-block">
+            <strong>Talk track</strong>
+            <ul>
+              {concept.talkTrack.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="concept-block">
+            <strong>Example</strong>
+            <p>{concept.example}</p>
+          </div>
+
+          <div className="concept-block">
+            <strong>References</strong>
+            <div className="concept-references">
+              {concept.references.map((reference) => (
+                <a
+                  key={reference.href}
+                  href={reference.href}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {reference.label}
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <p className="muted">{emptyMessage}</p>
+      )}
+    </aside>
+  );
+}
+
+function TermText({
+  text,
+  allowedConceptIds,
+  onSelectConcept,
+}: {
+  text: string;
+  allowedConceptIds: string[];
+  onSelectConcept: (id: string) => void;
+}) {
+  const nodes: ReactNode[] = [];
+  let lastIndex = 0;
+  TERM_ALIAS_REGEX.lastIndex = 0;
+
+  for (;;) {
+    const match = TERM_ALIAS_REGEX.exec(text);
+    if (!match) break;
+    const start = match.index;
+    const matched = match[0];
+    const concept = findConceptForText(matched, allowedConceptIds);
+    if (!concept) continue;
+    if (start > lastIndex) nodes.push(text.slice(lastIndex, start));
+    nodes.push(
+      <button
+        key={`${start}-${matched}`}
+        type="button"
+        className="zoom-term"
+        title={`Zoom: ${concept.title}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelectConcept(concept.id);
+        }}
+      >
+        {matched}
+      </button>,
+    );
+    lastIndex = start + matched.length;
+  }
+
+  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  return <>{nodes.length > 0 ? nodes : text}</>;
+}
+
 const editorTextareaStyle: CSSProperties = {
   width: "100%",
   fontFamily: "inherit",
@@ -2837,15 +3940,18 @@ function RealtimeSettingsPanel({
   debugEvents,
   micLevel,
   active,
+  provider,
 }: {
   settings: RealtimeSettings;
   setSettings: Dispatch<SetStateAction<RealtimeSettings>>;
   debugEvents: RealtimeDebugEvent[];
   micLevel: number;
   active: boolean;
+  provider: VoiceProvider;
 }) {
   const updateVad = (patch: Partial<RealtimeSettings["vad"]>) =>
     setSettings((prev) => ({ ...prev, vad: { ...prev.vad, ...patch } }));
+  const isElevenLabs = provider === "elevenlabs";
 
   return (
     <details
@@ -2860,7 +3966,7 @@ function RealtimeSettingsPanel({
       }}
     >
       <summary style={{ cursor: "pointer", fontWeight: 600 }}>
-        Voice controls
+        {isElevenLabs ? "ElevenLabs voice controls" : "OpenAI realtime controls"}
       </summary>
       <div
         style={{
@@ -2872,12 +3978,13 @@ function RealtimeSettingsPanel({
         }}
       >
         <label style={settingsLabelStyle}>
-          Speech speed {settings.voice_speed.toFixed(2)}x
+          {isElevenLabs ? "Agent speed" : "Speech speed"}{" "}
+          {settings.voice_speed.toFixed(2)}x
           <input
             data-testid="voice-speed"
             type="range"
             min="0.75"
-            max="1.5"
+            max={isElevenLabs ? "1.2" : "1.5"}
             step="0.05"
             value={settings.voice_speed}
             onChange={(e) =>
@@ -2888,22 +3995,24 @@ function RealtimeSettingsPanel({
             }
           />
         </label>
-        <label style={settingsLabelStyle}>
-          VAD mode
-          <select
-            data-testid="vad-mode"
-            value={settings.vad.mode}
-            onChange={(e) =>
-              updateVad({
-                mode: e.target.value as RealtimeSettings["vad"]["mode"],
-              })
-            }
-          >
-            <option value="semantic_vad">Semantic</option>
-            <option value="server_vad">Server threshold</option>
-          </select>
-        </label>
-        {settings.vad.mode === "semantic_vad" ? (
+        {!isElevenLabs && (
+          <label style={settingsLabelStyle}>
+            VAD mode
+            <select
+              data-testid="vad-mode"
+              value={settings.vad.mode}
+              onChange={(e) =>
+                updateVad({
+                  mode: e.target.value as RealtimeSettings["vad"]["mode"],
+                })
+              }
+            >
+              <option value="semantic_vad">Semantic</option>
+              <option value="server_vad">Server threshold</option>
+            </select>
+          </label>
+        )}
+        {!isElevenLabs && settings.vad.mode === "semantic_vad" ? (
           <label style={settingsLabelStyle}>
             Eagerness
             <select
@@ -2921,7 +4030,7 @@ function RealtimeSettingsPanel({
               <option value="auto">Auto</option>
             </select>
           </label>
-        ) : (
+        ) : !isElevenLabs ? (
           <>
             <label style={settingsLabelStyle}>
               Threshold {settings.vad.threshold.toFixed(2)}
@@ -2964,24 +4073,26 @@ function RealtimeSettingsPanel({
               />
             </label>
           </>
+        ) : null}
+        {!isElevenLabs && (
+          <label
+            style={{
+              ...settingsLabelStyle,
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
+              gap: "0.45rem",
+            }}
+          >
+            <input
+              data-testid="vad-interrupt"
+              type="checkbox"
+              checked={settings.vad.interrupt_response}
+              onChange={(e) => updateVad({ interrupt_response: e.target.checked })}
+            />
+            Allow barge-in
+          </label>
         )}
-        <label
-          style={{
-            ...settingsLabelStyle,
-            display: "flex",
-            flexDirection: "row",
-            alignItems: "center",
-            gap: "0.45rem",
-          }}
-        >
-          <input
-            data-testid="vad-interrupt"
-            type="checkbox"
-            checked={settings.vad.interrupt_response}
-            onChange={(e) => updateVad({ interrupt_response: e.target.checked })}
-          />
-          Allow barge-in
-        </label>
         <div style={{ ...settingsLabelStyle, gap: "0.2rem" }}>
           Mic level {(micLevel * 100).toFixed(0)}%
           <MicMeter level={micLevel} />
@@ -3024,6 +4135,15 @@ function readInteractionMode(): InteractionMode {
     return raw === "text" ? "text" : "voice";
   } catch {
     return "voice";
+  }
+}
+
+function readVoiceProvider(): VoiceProvider {
+  try {
+    const raw = window.localStorage.getItem(VOICE_PROVIDER_STORAGE_KEY);
+    return raw === "elevenlabs" ? "elevenlabs" : "openai";
+  } catch {
+    return "openai";
   }
 }
 

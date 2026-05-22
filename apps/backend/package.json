@@ -12,6 +12,7 @@
     "verify:drills": "tsx src/verify-drills.ts",
     "seed:templates": "tsx src/seed-templates.ts",
     "gen:drills": "tsx src/gen-drills.ts",
+    "elevenlabs:setup": "tsx src/elevenlabs-setup.ts",
     "extract:resources": "tsx src/resources/cli.ts",
     "import:resource-drafts": "tsx src/resources/import-drafts.ts",
     "test": "tsx --test src/**/*.test.ts"

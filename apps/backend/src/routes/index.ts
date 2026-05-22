@@ -25,6 +25,12 @@ import {
   type RealtimeTurnDetection,
 } from "../services/realtime.js";
 import { hasOpenAI } from "../services/llm.js";
+import {
+  ElevenLabsError,
+  elevenLabsConfigured,
+  hasElevenLabs,
+  mintConversationToken,
+} from "../services/elevenlabs.js";
 import { config } from "../config.js";
 import type { DrillAttempt, DrillItem, Mode, TokenUsage } from "../types.js";
 
@@ -53,8 +59,63 @@ apiRouter.get("/health", (_req: Request, res: Response) => {
     ok: true,
     drills: drills.count(),
     openai_configured: hasOpenAI(),
+    elevenlabs_configured: elevenLabsConfigured(),
+    elevenlabs_api_key_present: hasElevenLabs(),
+    voice_provider: config.voiceProvider,
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* POST /api/elevenlabs/conversation-token                            */
+/* Mints a short-lived ElevenLabs conversation token tied to the      */
+/* configured private agent. The browser uses it to open the voice    */
+/* WebRTC connection; ELEVENLABS_API_KEY never leaves the backend.    */
+/* ------------------------------------------------------------------ */
+apiRouter.post(
+  "/elevenlabs/conversation-token",
+  async (req: Request, res: Response) => {
+    const requestId = req.header("x-request-id") ?? randomUUID();
+    res.setHeader("x-request-id", requestId);
+    if (!hasElevenLabs()) {
+      return res.status(503).json({
+        error: "ELEVENLABS_API_KEY not configured on backend",
+        request_id: requestId,
+      });
+    }
+    if (!config.elevenLabsAgentId) {
+      return res.status(503).json({
+        error:
+          "ELEVENLABS_AGENT_ID not configured — run `pnpm elevenlabs:setup`",
+        request_id: requestId,
+      });
+    }
+    try {
+      const token = await mintConversationToken(config.elevenLabsAgentId);
+      res.json({
+        token: token.token,
+        agent_id: token.agent_id,
+        expires_at: token.expires_at,
+      });
+    } catch (err) {
+      if (err instanceof ElevenLabsError) {
+        return res.status(502).json({
+          error: err.message,
+          upstream_status: err.upstreamStatus,
+          upstream_request_id: err.upstreamRequestId,
+          request_id: requestId,
+        });
+      }
+      console.error("[elevenlabs] conversation_token.unhandled_error", {
+        request_id: requestId,
+        message: (err as Error).message,
+      });
+      res.status(500).json({
+        error: (err as Error).message,
+        request_id: requestId,
+      });
+    }
+  },
+);
 
 /* ------------------------------------------------------------------ */
 /* POST /api/realtime/token                                           */

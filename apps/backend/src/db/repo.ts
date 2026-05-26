@@ -86,7 +86,15 @@ export const drills = {
       where.push("topic = @topic");
       params.topic = opts.topic;
     }
-    if (opts.mode && opts.mode !== "mixed" && opts.mode !== "weak_topics" && opts.mode !== "mock_interview") {
+    if (opts.mode === "rapid_fundamentals") {
+      where.push("tags LIKE @rapidTag");
+      params.rapidTag = '%"rapid_fundamentals"%';
+    } else if (
+      opts.mode &&
+      opts.mode !== "mixed" &&
+      opts.mode !== "weak_topics" &&
+      opts.mode !== "mock_interview"
+    ) {
       // Map known modes onto topic filters.
       const modeTopicMap: Record<string, string> = {
         db_indexes: "database",

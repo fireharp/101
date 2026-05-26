@@ -30,6 +30,7 @@ import { useElevenLabs } from "./useElevenLabs.ts";
 
 const MODES: { value: Mode; label: string }[] = [
   { value: "mixed", label: "Mixed" },
+  { value: "rapid_fundamentals", label: "Rapid fundamentals" },
   { value: "db_indexes", label: "DB indexes" },
   { value: "system_design", label: "System design" },
   { value: "weak_topics", label: "Weak topics" },
@@ -1049,6 +1050,8 @@ export function App() {
       ? `tokens ${formatTokens(usageSummary.session?.total_tokens ?? 0)} session / ${formatTokens(usageSummary.total.total_tokens)} total`
       : `tokens ${formatTokens(usageSummary.total.total_tokens)} total`
     : "tokens ...";
+  const isRapidFundamentalsMode =
+    (session?.mode ?? mode) === "rapid_fundamentals";
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -2355,11 +2358,12 @@ export function App() {
         {!drill && !resuming && (
           <>
             <p className="muted">
-              Pick a drill pool and start. Text is the default; live voice is
-              for short polishing rounds.
+              Pick a drill pool and start. Rapid fundamentals expects 20-40
+              second definition, consequence, caveat, example answers.
             </p>
             <div className="row">
               <select
+                data-testid="mode-select"
                 value={mode}
                 onChange={(e) => setMode(e.target.value as Mode)}
               >
@@ -2704,17 +2708,21 @@ export function App() {
           <>
             <div className="scoreline" data-testid="grade-panel">
               <span className="score" data-testid="grade-score">
-                {Math.round(grade.score * 100)}
+                {isRapidFundamentalsMode
+                  ? formatRapidScore(grade.score)
+                  : Math.round(grade.score * 100)}
               </span>
               <span className={verdictClass} data-testid="grade-verdict">
                 {grade.verdict}
               </span>
             </div>
             <p className="muted" style={{ marginTop: "0.2rem" }}>
-              must-have {(grade.breakdown.must_have_coverage * 100).toFixed(0)}% ·
-              clarity {(grade.breakdown.answer_clarity * 100).toFixed(0)}% ·
-              tradeoffs {(grade.breakdown.tradeoff_coverage * 100).toFixed(0)}% ·
-              speed {(grade.breakdown.speed_score * 100).toFixed(0)}%
+              {isRapidFundamentalsMode ? "definition" : "must-have"}{" "}
+              {(grade.breakdown.must_have_coverage * 100).toFixed(0)}% · clarity{" "}
+              {(grade.breakdown.answer_clarity * 100).toFixed(0)}% ·{" "}
+              {isRapidFundamentalsMode ? "caveat" : "tradeoffs"}{" "}
+              {(grade.breakdown.tradeoff_coverage * 100).toFixed(0)}% · speed{" "}
+              {(grade.breakdown.speed_score * 100).toFixed(0)}%
               {grade.breakdown.red_flag_penalty > 0 &&
                 ` · −${(grade.breakdown.red_flag_penalty * 100).toFixed(0)} flags`}
             </p>
@@ -2728,6 +2736,30 @@ export function App() {
                   ? "Next drill will autoplay after the coach finishes."
                   : `Next drill autoplaying in ${autoAdvanceRemaining}s.`}
               </p>
+            )}
+
+            <p className="muted" data-testid="grade-help" style={{ marginTop: "0.35rem" }}>
+              Scored against explicit rubric coverage; implied points get partial
+              credit, and missed bullets are what to say more directly.
+            </p>
+
+            {grade.covered_points && grade.covered_points.length > 0 && (
+              <>
+                <h3 style={{ margin: "0.8rem 0 0.2rem", fontSize: "0.95rem" }}>
+                  Covered
+                </h3>
+                <ul className="missed">
+                  {grade.covered_points.map((m, i) => (
+                    <li key={i}>
+                      <TermText
+                        text={m}
+                        allowedConceptIds={currentConceptIds}
+                        onSelectConcept={selectConcept}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </>
             )}
 
             {grade.missed_points.length > 0 && (
@@ -3864,6 +3896,11 @@ function formatTime(secs: number): string {
     .padStart(2, "0");
   const s = (secs % 60).toString().padStart(2, "0");
   return `${m}:${s}`;
+}
+
+function formatRapidScore(score: number): string {
+  const outOfFive = Math.max(0, Math.min(5, score * 5));
+  return `${outOfFive.toFixed(1).replace(/\.0$/, "")}/5`;
 }
 
 function formatDebugEvent(event: RealtimeDebugEvent): string {

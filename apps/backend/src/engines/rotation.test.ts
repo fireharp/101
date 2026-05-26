@@ -57,6 +57,34 @@ seedDrill("sd-a", "system_design", "rate_limiting", 3, "bucket_choice");
 seedDrill("sd-b", "system_design", "caching", 3, "stale_read");
 seedDrill("sd-c", "system_design", "queues", 2, "queue_mismatch");
 seedDrill("cc-a", "concurrency", "locking", 3, "lock_choice");
+drills.upsert({
+  id: "rapid-sec",
+  topic: "security",
+  subtopic: "xss",
+  difficulty: 2,
+  trap_type: "browser_security",
+  question_text: "Rapid security fixture",
+  expected_answer: { must_have: ["xss"], nice_to_have: ["caveat"], red_flags: ["unsafe"] },
+  rubric: { must_have: ["xss"], nice_to_have: ["caveat"], red_flags: ["unsafe"] },
+  canonical_short_answer: "XSS runs attacker JavaScript in your origin.",
+  canonical_deep_answer: null,
+  tags: ["rapid_fundamentals", "betterstack", "security"],
+  is_active: true,
+});
+drills.upsert({
+  id: "rapid-db",
+  topic: "database",
+  subtopic: "explain",
+  difficulty: 2,
+  trap_type: "query_plan",
+  question_text: "Rapid database fixture",
+  expected_answer: { must_have: ["explain"], nice_to_have: ["caveat"], red_flags: ["unsafe"] },
+  rubric: { must_have: ["explain"], nice_to_have: ["caveat"], red_flags: ["unsafe"] },
+  canonical_short_answer: "EXPLAIN shows estimates; EXPLAIN ANALYZE runs the query.",
+  canonical_deep_answer: null,
+  tags: ["rapid_fundamentals", "betterstack", "database"],
+  is_active: true,
+});
 
 test("selectNextDrill returns a drill from the pool", () => {
   const session = sessions.create(userId, "mixed");
@@ -69,7 +97,7 @@ test("selectNextDrill returns a drill from the pool", () => {
   assert.ok(
     ["db-a", "db-b", "db-c", "sd-a", "sd-b", "sd-c", "cc-a"].includes(
       drill!.id,
-    ),
+    ) || drill!.tags.includes("rapid_fundamentals"),
   );
 });
 
@@ -114,6 +142,30 @@ test("db_indexes mode only returns database drills", () => {
       `iter ${i} returned ${drill!.topic}/${drill!.id}`,
     );
   }
+});
+
+test("rapid_fundamentals mode only returns tagged rapid drills", () => {
+  const session = sessions.create(userId, "rapid_fundamentals");
+  const topics = new Set<string>();
+  for (let i = 0; i < 12; i++) {
+    const drill = selectNextDrill({
+      user_id: userId,
+      session_id: session.id,
+      mode: "rapid_fundamentals",
+    });
+    assert.ok(drill);
+    assert.ok(
+      drill!.tags.includes("rapid_fundamentals"),
+      `${drill!.id} missing rapid_fundamentals tag`,
+    );
+    topics.add(drill!.topic);
+    attempts.createPending({
+      user_id: userId,
+      session_id: session.id,
+      drill_id: drill!.id,
+    });
+  }
+  assert.ok(topics.size >= 2, `expected topic balance, got ${[...topics]}`);
 });
 
 test("weak_topics mode surfaces high-weakness subtopics", () => {

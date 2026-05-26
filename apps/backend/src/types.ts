@@ -5,7 +5,8 @@ export type Mode =
   | "db_indexes"
   | "system_design"
   | "weak_topics"
-  | "mock_interview";
+  | "mock_interview"
+  | "rapid_fundamentals";
 
 export interface Rubric {
   must_have: string[];
@@ -99,6 +100,7 @@ export interface UserSkillState {
 export interface GradingResult {
   score: number;
   verdict: "pass" | "borderline" | "fail";
+  covered_points?: string[];
   missed_points: string[];
   ideal_short_answer: string;
   follow_up_drills: string[];

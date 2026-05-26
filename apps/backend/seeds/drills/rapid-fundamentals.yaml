@@ -1,0 +1,1151 @@
+- id: rapid_security_sql_injection_001
+  topic: security
+  subtopic: sql_injection
+  difficulty: 2
+  trap_type: unsafe_string_concat
+  question_text: >
+    In 30 seconds, show what SQL injection is and how you prevent it in app code.
+  expected_answer:
+    must_have: [user input changes query structure, parameterized queries, no string interpolation]
+    nice_to_have: [allowlist dynamic identifiers and use least privilege]
+    red_flags: [escaping alone is enough]
+  rubric:
+    must_have: [user input changes query structure, parameterized queries, no string interpolation]
+    nice_to_have: [allowlist dynamic identifiers and use least privilege]
+    red_flags: [escaping alone is enough]
+  canonical_short_answer: >
+    SQL injection is user input changing the structure of a query. Use bound
+    parameters or prepared statements, never string interpolation for values;
+    allowlist dynamic identifiers and keep DB privileges narrow.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, security, sql]
+  is_active: true
+
+- id: rapid_security_xss_types_002
+  topic: security
+  subtopic: xss
+  difficulty: 2
+  trap_type: framework_escaping
+  question_text: >
+    Explain stored, reflected, and DOM XSS, plus the default prevention strategy.
+  expected_answer:
+    must_have: [attacker JavaScript runs in your origin, stored reflected DOM types, escape by output context]
+    nice_to_have: [sanitize allowed HTML and add CSP as defense in depth]
+    red_flags: [React means XSS is impossible]
+  rubric:
+    must_have: [attacker JavaScript runs in your origin, stored reflected DOM types, escape by output context]
+    nice_to_have: [sanitize allowed HTML and add CSP as defense in depth]
+    red_flags: [React means XSS is impossible]
+  canonical_short_answer: >
+    XSS means attacker-controlled JavaScript runs in your origin. Stored persists
+    in data, reflected comes from the request, and DOM XSS is created by unsafe
+    client-side APIs; prevent it with context-aware escaping, sanitization for
+    allowed HTML, and CSP as defense in depth.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, security, frontend]
+  is_active: true
+
+- id: rapid_security_csrf_xss_003
+  topic: security
+  subtopic: csrf
+  difficulty: 2
+  trap_type: threat_confusion
+  question_text: >
+    What is the difference between CSRF and XSS, and why does the distinction matter?
+  expected_answer:
+    must_have: [CSRF sends authenticated browser request, XSS runs attacker script, XSS can bypass CSRF defenses]
+    nice_to_have: [SameSite cookies tokens and origin checks]
+    red_flags: [CORS prevents CSRF]
+  rubric:
+    must_have: [CSRF sends authenticated browser request, XSS runs attacker script, XSS can bypass CSRF defenses]
+    nice_to_have: [SameSite cookies tokens and origin checks]
+    red_flags: [CORS prevents CSRF]
+  canonical_short_answer: >
+    CSRF tricks a logged-in browser into sending a request; XSS runs attacker
+    JavaScript inside your origin. CSRF defenses include SameSite cookies, tokens,
+    and origin checks, but XSS can often bypass them because it executes as the site.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, security, web]
+  is_active: true
+
+- id: rapid_security_cookie_flags_004
+  topic: security
+  subtopic: cookies
+  difficulty: 2
+  trap_type: flag_meanings
+  question_text: >
+    Define HttpOnly, Secure, and SameSite cookie flags with one practical example.
+  expected_answer:
+    must_have: [HttpOnly blocks JavaScript access, Secure requires HTTPS, SameSite limits cross-site sending]
+    nice_to_have: [SameSite None requires Secure and cookies still need authorization checks]
+    red_flags: [HttpOnly stops CSRF]
+  rubric:
+    must_have: [HttpOnly blocks JavaScript access, Secure requires HTTPS, SameSite limits cross-site sending]
+    nice_to_have: [SameSite None requires Secure and cookies still need authorization checks]
+    red_flags: [HttpOnly stops CSRF]
+  canonical_short_answer: >
+    HttpOnly keeps JavaScript from reading the cookie, Secure sends it only over
+    HTTPS, and SameSite controls cross-site sending. For example, an auth cookie
+    should be HttpOnly and Secure, with SameSite chosen based on whether cross-site
+    flows are required.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, security, web]
+  is_active: true
+
+- id: rapid_security_token_storage_005
+  topic: security
+  subtopic: auth_tokens
+  difficulty: 3
+  trap_type: universal_rule
+  question_text: >
+    LocalStorage versus HttpOnly cookie for auth tokens: give the tradeoff quickly.
+  expected_answer:
+    must_have: [localStorage token can be stolen by XSS, HttpOnly cookie hides token from JS, cookies need CSRF defenses]
+    nice_to_have: [answer depends on threat model and app constraints]
+    red_flags: [localStorage is always safe because HTTPS]
+  rubric:
+    must_have: [localStorage token can be stolen by XSS, HttpOnly cookie hides token from JS, cookies need CSRF defenses]
+    nice_to_have: [answer depends on threat model and app constraints]
+    red_flags: [localStorage is always safe because HTTPS]
+  canonical_short_answer: >
+    LocalStorage is easy but an XSS bug can read and exfiltrate the token. An
+    HttpOnly cookie protects the token from JavaScript but must be paired with
+    CSRF defenses and server-side authorization checks.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, security, auth]
+  is_active: true
+
+- id: rapid_security_cors_006
+  topic: security
+  subtopic: cors
+  difficulty: 2
+  trap_type: auth_confusion
+  question_text: >
+    What is CORS, and what is a dangerous CORS configuration?
+  expected_answer:
+    must_have: [browser cross-origin read policy, not authentication, do not reflect any origin with credentials]
+    nice_to_have: [use explicit allowlist per environment]
+    red_flags: [CORS protects server-to-server APIs]
+  rubric:
+    must_have: [browser cross-origin read policy, not authentication, do not reflect any origin with credentials]
+    nice_to_have: [use explicit allowlist per environment]
+    red_flags: [CORS protects server-to-server APIs]
+  canonical_short_answer: >
+    CORS is a browser policy controlling which origins can read cross-origin
+    responses; it is not authentication. A dangerous setup reflects arbitrary
+    origins while allowing credentials, so use explicit allowlists.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, security, browser]
+  is_active: true
+
+- id: rapid_security_ssrf_007
+  topic: security
+  subtopic: ssrf
+  difficulty: 3
+  trap_type: url_validation
+  question_text: >
+    Define SSRF and name the production controls you would add.
+  expected_answer:
+    must_have: [server fetches attacker controlled URL, attacker reaches internal services, block private IPs after DNS resolution]
+    nice_to_have: [allowlists redirects disabled or revalidated and egress controls]
+    red_flags: [checking string starts with https is enough]
+  rubric:
+    must_have: [server fetches attacker controlled URL, attacker reaches internal services, block private IPs after DNS resolution]
+    nice_to_have: [allowlists redirects disabled or revalidated and egress controls]
+    red_flags: [checking string starts with https is enough]
+  canonical_short_answer: >
+    SSRF is when your server fetches an attacker-controlled URL and can be used
+    to hit internal metadata or admin services. Use allowlists, resolve and block
+    private IP ranges, revalidate redirects, and add egress controls.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, security, networking]
+  is_active: true
+
+- id: rapid_security_file_upload_008
+  topic: security
+  subtopic: file_uploads
+  difficulty: 3
+  trap_type: mime_trust
+  question_text: >
+    How do you secure user file uploads without turning the answer into a system design?
+  expected_answer:
+    must_have: [size and type validation, random names outside executable path, authorization on access]
+    nice_to_have: [scan risky files and re-encode images]
+    red_flags: [trust the Content-Type header]
+  rubric:
+    must_have: [size and type validation, random names outside executable path, authorization on access]
+    nice_to_have: [scan risky files and re-encode images]
+    red_flags: [trust the Content-Type header]
+  canonical_short_answer: >
+    Limit size, validate content and extension, store under random names outside
+    executable paths or in object storage, and check authorization on every read.
+    For example, re-encode uploaded images and scan high-risk files.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, security, files]
+  is_active: true
+
+- id: rapid_security_authz_tenant_009
+  topic: security
+  subtopic: authorization
+  difficulty: 3
+  trap_type: idor
+  question_text: >
+    Give a concrete authorization bug in a multi-tenant app and the fix.
+  expected_answer:
+    must_have: [user changes tenant or project id, server checks membership, never trust client scoped ids alone]
+    nice_to_have: [centralize authorization checks and test cross-tenant access]
+    red_flags: [hide the button in the UI only]
+  rubric:
+    must_have: [user changes tenant or project id, server checks membership, never trust client scoped ids alone]
+    nice_to_have: [centralize authorization checks and test cross-tenant access]
+    red_flags: [hide the button in the UI only]
+  canonical_short_answer: >
+    A classic bug is changing project_id in a request and reading another
+    tenant's data. The server must check the current user's membership and role
+    for that tenant on every access, with tests for cross-tenant denial.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, security, auth]
+  is_active: true
+
+- id: rapid_security_webhook_010
+  topic: security
+  subtopic: webhooks
+  difficulty: 3
+  trap_type: replay_duplicate
+  question_text: >
+    How do you process incoming webhooks safely under retries and attacker traffic?
+  expected_answer:
+    must_have: [verify signature, timestamp tolerance replay protection, idempotency key or event id]
+    nice_to_have: [durable transaction and state machine]
+    red_flags: [accept webhook because it came over HTTPS]
+  rubric:
+    must_have: [verify signature, timestamp tolerance replay protection, idempotency key or event id]
+    nice_to_have: [durable transaction and state machine]
+    red_flags: [accept webhook because it came over HTTPS]
+  canonical_short_answer: >
+    Verify the provider signature, enforce timestamp tolerance to reduce replay,
+    and process each event id idempotently in a durable transaction. For example,
+    a duplicate payment webhook should return the recorded result, not charge again.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, security, webhooks]
+  is_active: true
+
+- id: rapid_db_explain_analyze_011
+  topic: database
+  subtopic: explain
+  difficulty: 2
+  trap_type: executes_query
+  question_text: >
+    What is the difference between EXPLAIN and EXPLAIN ANALYZE in Postgres?
+  expected_answer:
+    must_have: [EXPLAIN shows estimated plan, EXPLAIN ANALYZE executes query, actual timing and row counts]
+    nice_to_have: [wrap writes in transaction and rollback or avoid production writes]
+    red_flags: [ANALYZE never runs the query]
+  rubric:
+    must_have: [EXPLAIN shows estimated plan, EXPLAIN ANALYZE executes query, actual timing and row counts]
+    nice_to_have: [wrap writes in transaction and rollback or avoid production writes]
+    red_flags: [ANALYZE never runs the query]
+  canonical_short_answer: >
+    EXPLAIN shows the planner's estimated plan; EXPLAIN ANALYZE actually runs
+    the statement and returns real timing and row counts. For writes, use a
+    rollback transaction or avoid running it directly on production data.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, database, postgres]
+  is_active: true
+
+- id: rapid_db_vacuum_full_012
+  topic: database
+  subtopic: vacuum
+  difficulty: 2
+  trap_type: lock_impact
+  question_text: >
+    What does VACUUM do, and why is VACUUM FULL a different operational choice?
+  expected_answer:
+    must_have: [VACUUM cleans dead tuples, supports MVCC reuse, VACUUM FULL rewrites table]
+    nice_to_have: [VACUUM FULL takes heavy lock and returns space to OS]
+    red_flags: [VACUUM FULL is always safe online]
+  rubric:
+    must_have: [VACUUM cleans dead tuples, supports MVCC reuse, VACUUM FULL rewrites table]
+    nice_to_have: [VACUUM FULL takes heavy lock and returns space to OS]
+    red_flags: [VACUUM FULL is always safe online]
+  canonical_short_answer: >
+    Normal VACUUM cleans dead tuples so Postgres can reuse space and maintain
+    MVCC health. VACUUM FULL rewrites the table, can return disk to the OS, and
+    is much more disruptive because it takes a heavy lock.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, database, postgres]
+  is_active: true
+
+- id: rapid_db_index_category_price_013
+  topic: database
+  subtopic: indexes
+  difficulty: 3
+  trap_type: equality_then_order
+  question_text: >
+    Index this query quickly: WHERE category_id = ? ORDER BY price LIMIT 20.
+  expected_answer:
+    must_have: [composite B-tree index, category_id before price, supports ORDER BY price LIMIT]
+    nice_to_have: [partial index if query always filters active rows]
+    red_flags: [index only price]
+  rubric:
+    must_have: [composite B-tree index, category_id before price, supports ORDER BY price LIMIT]
+    nice_to_have: [partial index if query always filters active rows]
+    red_flags: [index only price]
+  canonical_short_answer: >
+    Use a composite B-tree index on (category_id, price). The equality predicate
+    narrows to one category, then the index already yields rows in price order,
+    so LIMIT 20 can stop early; add a partial predicate if all queries require active rows.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, database, indexing]
+  is_active: true
+
+- id: rapid_db_index_status_seller_014
+  topic: database
+  subtopic: indexes
+  difficulty: 3
+  trap_type: composite_order
+  question_text: >
+    Pick an index for WHERE status = ? AND seller_id = ? ORDER BY updated_at DESC.
+  expected_answer:
+    must_have: [composite B-tree index, equality columns before updated_at, updated_at DESC supports sort]
+    nice_to_have: [choose status or seller first based on selectivity]
+    red_flags: [separate single-column indexes are always equivalent]
+  rubric:
+    must_have: [composite B-tree index, equality columns before updated_at, updated_at DESC supports sort]
+    nice_to_have: [choose status or seller first based on selectivity]
+    red_flags: [separate single-column indexes are always equivalent]
+  canonical_short_answer: >
+    Use a composite B-tree like (seller_id, status, updated_at DESC) or swap the
+    equality columns based on selectivity. Equality columns come first, then the
+    ordered timestamp lets Postgres avoid an extra sort.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, database, indexing]
+  is_active: true
+
+- id: rapid_db_index_not_used_015
+  topic: database
+  subtopic: planner
+  difficulty: 3
+  trap_type: planner_reasoning
+  question_text: >
+    Name common reasons Postgres does not use an index you expected it to use.
+  expected_answer:
+    must_have: [low selectivity or small table, stale stats, function or cast mismatch]
+    nice_to_have: [wrong column order bloat or planner cost makes seq scan cheaper]
+    red_flags: [force indexes without checking plan]
+  rubric:
+    must_have: [low selectivity or small table, stale stats, function or cast mismatch]
+    nice_to_have: [wrong column order bloat or planner cost makes seq scan cheaper]
+    red_flags: [force indexes without checking plan]
+  canonical_short_answer: >
+    The planner may prefer a seq scan if the table is small, the predicate has
+    low selectivity, stats are stale, or the query uses a cast/function that does
+    not match the index. Check EXPLAIN ANALYZE with buffers before changing indexes.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, database, postgres]
+  is_active: true
+
+- id: rapid_db_covering_index_016
+  topic: database
+  subtopic: indexes
+  difficulty: 3
+  trap_type: index_only_scan
+  question_text: >
+    What is a covering index in Postgres, and what is the caveat?
+  expected_answer:
+    must_have: [index contains all columns needed, can enable index-only scan, INCLUDE for non-key columns]
+    nice_to_have: [visibility map must show pages visible and writes get more expensive]
+    red_flags: [covering indexes are free]
+  rubric:
+    must_have: [index contains all columns needed, can enable index-only scan, INCLUDE for non-key columns]
+    nice_to_have: [visibility map must show pages visible and writes get more expensive]
+    red_flags: [covering indexes are free]
+  canonical_short_answer: >
+    A covering index contains the columns a query needs, often using INCLUDE for
+    non-key columns, so Postgres may perform an index-only scan. The caveat is
+    write/storage cost and visibility-map requirements.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, database, indexing]
+  is_active: true
+
+- id: rapid_db_partial_index_017
+  topic: database
+  subtopic: indexes
+  difficulty: 3
+  trap_type: predicate_match
+  question_text: >
+    Define a partial index and give the active-products example.
+  expected_answer:
+    must_have: [index only subset of rows, smaller and cheaper to scan, predicate must match query]
+    nice_to_have: [example WHERE active = true]
+    red_flags: [partial index helps queries without the predicate]
+  rubric:
+    must_have: [index only subset of rows, smaller and cheaper to scan, predicate must match query]
+    nice_to_have: [example WHERE active = true]
+    red_flags: [partial index helps queries without the predicate]
+  canonical_short_answer: >
+    A partial index indexes only rows matching a predicate, making it smaller
+    and faster for matching queries. For example, index active products with
+    WHERE active = true if every relevant query includes that predicate.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, database, indexing]
+  is_active: true
+
+- id: rapid_db_duplicates_sql_018
+  topic: database
+  subtopic: sql
+  difficulty: 2
+  trap_type: group_by
+  question_text: >
+    Write the shape of a SQL query that finds duplicate emails.
+  expected_answer:
+    must_have: [GROUP BY email, HAVING COUNT greater than one, return email or count]
+    nice_to_have: [filter nulls if null should not count as duplicate]
+    red_flags: [use DISTINCT to find duplicates]
+  rubric:
+    must_have: [GROUP BY email, HAVING COUNT greater than one, return email or count]
+    nice_to_have: [filter nulls if null should not count as duplicate]
+    red_flags: [use DISTINCT to find duplicates]
+  canonical_short_answer: >
+    Group by the candidate duplicate key and filter groups with count greater
+    than one: SELECT email, count(*) FROM users GROUP BY email HAVING count(*) > 1.
+    Add WHERE email IS NOT NULL if nulls should be ignored.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, database, sql]
+  is_active: true
+
+- id: rapid_db_latest_per_user_019
+  topic: database
+  subtopic: sql
+  difficulty: 3
+  trap_type: window_vs_distinct
+  question_text: >
+    How do you select the latest row per user in Postgres?
+  expected_answer:
+    must_have: [DISTINCT ON user_id, ORDER BY user_id and created_at DESC, window row_number alternative]
+    nice_to_have: [index on user_id created_at DESC]
+    red_flags: [GROUP BY user_id and select arbitrary columns]
+  rubric:
+    must_have: [DISTINCT ON user_id, ORDER BY user_id and created_at DESC, window row_number alternative]
+    nice_to_have: [index on user_id created_at DESC]
+    red_flags: [GROUP BY user_id and select arbitrary columns]
+  canonical_short_answer: >
+    In Postgres, use DISTINCT ON (user_id) with ORDER BY user_id, created_at DESC,
+    or use row_number over partition by user_id. For example, an index on
+    (user_id, created_at DESC) matches that access pattern.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, database, sql]
+  is_active: true
+
+- id: rapid_db_isolation_020
+  topic: database
+  subtopic: transactions
+  difficulty: 3
+  trap_type: retry_logic
+  question_text: >
+    Summarize Postgres transaction isolation levels and the practical caveat.
+  expected_answer:
+    must_have: [read committed default, repeatable read snapshot, serializable can abort]
+    nice_to_have: [application must retry serialization failures]
+    red_flags: [serializable means no retries needed]
+  rubric:
+    must_have: [read committed default, repeatable read snapshot, serializable can abort]
+    nice_to_have: [application must retry serialization failures]
+    red_flags: [serializable means no retries needed]
+  canonical_short_answer: >
+    Read committed sees committed data per statement; repeatable read gives a
+    stable snapshot; serializable gives stronger anomaly protection by aborting
+    conflicting transactions. The application must handle retries.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, database, transactions]
+  is_active: true
+
+- id: rapid_db_deadlock_021
+  topic: database
+  subtopic: transactions
+  difficulty: 3
+  trap_type: lock_order
+  question_text: >
+    How do you prevent and handle database deadlocks?
+  expected_answer:
+    must_have: [consistent lock order, short transactions, retry deadlock errors]
+    nice_to_have: [lock only rows needed and observe lock waits]
+    red_flags: [disable transactions]
+  rubric:
+    must_have: [consistent lock order, short transactions, retry deadlock errors]
+    nice_to_have: [lock only rows needed and observe lock waits]
+    red_flags: [disable transactions]
+  canonical_short_answer: >
+    Prevent deadlocks by taking locks in a consistent order and keeping
+    transactions short. Still expect occasional deadlock errors under concurrency,
+    so retry safe transactions and watch lock-wait metrics.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, database, transactions]
+  is_active: true
+
+- id: rapid_db_idempotency_022
+  topic: database
+  subtopic: idempotency
+  difficulty: 3
+  trap_type: duplicate_side_effect
+  question_text: >
+    How do you make duplicate payment or webhook processing idempotent?
+  expected_answer:
+    must_have: [unique idempotency key or event id, durable table with unique constraint, transaction around state change]
+    nice_to_have: [state machine and safe retry response]
+    red_flags: [remember processed ids only in memory]
+  rubric:
+    must_have: [unique idempotency key or event id, durable table with unique constraint, transaction around state change]
+    nice_to_have: [state machine and safe retry response]
+    red_flags: [remember processed ids only in memory]
+  canonical_short_answer: >
+    Store a unique event id or idempotency key in a durable table with a unique
+    constraint, and perform the side effect/state transition in a transaction.
+    A retry should read the recorded result instead of repeating the charge.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, database, reliability]
+  is_active: true
+
+- id: rapid_frontend_repaint_reflow_023
+  topic: frontend
+  subtopic: rendering
+  difficulty: 2
+  trap_type: layout_vs_paint
+  question_text: >
+    What is the difference between repaint and reflow in browser rendering?
+  expected_answer:
+    must_have: [reflow recalculates layout geometry, repaint redraws pixels, layout changes are usually more expensive]
+    nice_to_have: [use transforms or opacity for cheap animations]
+    red_flags: [color changes always cause reflow]
+  rubric:
+    must_have: [reflow recalculates layout geometry, repaint redraws pixels, layout changes are usually more expensive]
+    nice_to_have: [use transforms or opacity for cheap animations]
+    red_flags: [color changes always cause reflow]
+  canonical_short_answer: >
+    Reflow, or layout, recalculates element geometry like size and position.
+    Repaint redraws pixels after visual changes. For example, animating transform
+    is usually cheaper than repeatedly changing layout-affecting widths.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, frontend, browser]
+  is_active: true
+
+- id: rapid_frontend_layout_thrashing_024
+  topic: frontend
+  subtopic: rendering
+  difficulty: 3
+  trap_type: forced_sync_layout
+  question_text: >
+    Define layout thrashing and the practical fix.
+  expected_answer:
+    must_have: [alternating DOM writes and layout reads, forces repeated layout, batch reads then writes]
+    nice_to_have: [requestAnimationFrame or transform opacity]
+    red_flags: [add more debouncing only]
+  rubric:
+    must_have: [alternating DOM writes and layout reads, forces repeated layout, batch reads then writes]
+    nice_to_have: [requestAnimationFrame or transform opacity]
+    red_flags: [add more debouncing only]
+  canonical_short_answer: >
+    Layout thrashing is alternating DOM writes with reads like offsetHeight,
+    forcing the browser to recalculate layout repeatedly. Batch reads before
+    writes, use requestAnimationFrame, and prefer transform/opacity for animations.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, frontend, performance]
+  is_active: true
+
+- id: rapid_frontend_core_web_vitals_025
+  topic: frontend
+  subtopic: web_vitals
+  difficulty: 3
+  trap_type: metric_actions
+  question_text: >
+    Name LCP, CLS, and INP, and one fix for each.
+  expected_answer:
+    must_have: [LCP largest content paint, CLS layout shift, INP interaction responsiveness]
+    nice_to_have: [optimize hero image reserve dimensions reduce main thread JS]
+    red_flags: [only Lighthouse score matters]
+  rubric:
+    must_have: [LCP largest content paint, CLS layout shift, INP interaction responsiveness]
+    nice_to_have: [optimize hero image reserve dimensions reduce main thread JS]
+    red_flags: [only Lighthouse score matters]
+  canonical_short_answer: >
+    LCP measures the main visible content load, CLS measures unexpected layout
+    shifts, and INP measures interaction responsiveness. For example, optimize
+    the hero image, reserve image dimensions, and reduce long main-thread tasks.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, frontend, performance]
+  is_active: true
+
+- id: rapid_frontend_event_loop_026
+  topic: frontend
+  subtopic: javascript_runtime
+  difficulty: 3
+  trap_type: task_order
+  question_text: >
+    Explain microtasks versus macrotasks and why UI can freeze.
+  expected_answer:
+    must_have: [promises are microtasks, timers are macrotasks, long tasks block rendering]
+    nice_to_have: [break work into chunks or yield to browser]
+    red_flags: [setTimeout always runs before promises]
+  rubric:
+    must_have: [promises are microtasks, timers are macrotasks, long tasks block rendering]
+    nice_to_have: [break work into chunks or yield to browser]
+    red_flags: [setTimeout always runs before promises]
+  canonical_short_answer: >
+    Promise callbacks run as microtasks before the browser moves to the next
+    macrotask like a timer. A long JavaScript task blocks rendering and input,
+    so split heavy work or yield back to the browser.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, frontend, javascript]
+  is_active: true
+
+- id: rapid_frontend_debounce_throttle_027
+  topic: frontend
+  subtopic: events
+  difficulty: 2
+  trap_type: wrong_tool
+  question_text: >
+    Debounce versus throttle: define each and give the search or scroll example.
+  expected_answer:
+    must_have: [debounce waits until quiet, throttle limits call rate, choose based on interaction]
+    nice_to_have: [search input debounce and scroll throttle or requestAnimationFrame]
+    red_flags: [they are identical]
+  rubric:
+    must_have: [debounce waits until quiet, throttle limits call rate, choose based on interaction]
+    nice_to_have: [search input debounce and scroll throttle or requestAnimationFrame]
+    red_flags: [they are identical]
+  canonical_short_answer: >
+    Debounce waits until events stop for a delay, which fits search input.
+    Throttle limits a handler to a maximum rate, which fits scroll or resize;
+    requestAnimationFrame is often useful for visual updates.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, frontend, javascript]
+  is_active: true
+
+- id: rapid_frontend_virtual_list_028
+  topic: frontend
+  subtopic: lists
+  difficulty: 2
+  trap_type: overrendering
+  question_text: >
+    What is a virtual list, and when should you use it?
+  expected_answer:
+    must_have: [render only visible rows, reduces DOM nodes, use for large lists]
+    nice_to_have: [fixed or measured row heights and accessibility caveats]
+    red_flags: [render all rows and hide with CSS]
+  rubric:
+    must_have: [render only visible rows, reduces DOM nodes, use for large lists]
+    nice_to_have: [fixed or measured row heights and accessibility caveats]
+    red_flags: [render all rows and hide with CSS]
+  canonical_short_answer: >
+    A virtual list renders only the rows near the viewport instead of thousands
+    of DOM nodes. For example, use it for large log tables, while handling row
+    heights, focus, and accessibility carefully.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, frontend, performance]
+  is_active: true
+
+- id: rapid_frontend_reactive_perf_029
+  topic: frontend
+  subtopic: framework_performance
+  difficulty: 3
+  trap_type: premature_memo
+  question_text: >
+    Give a compact answer for improving React or Vue rendering performance.
+  expected_answer:
+    must_have: [measure first, stable keys and avoid unnecessary rerenders, virtualize large lists]
+    nice_to_have: [memoization computed values and split expensive components]
+    red_flags: [memoize everything blindly]
+  rubric:
+    must_have: [measure first, stable keys and avoid unnecessary rerenders, virtualize large lists]
+    nice_to_have: [memoization computed values and split expensive components]
+    red_flags: [memoize everything blindly]
+  canonical_short_answer: >
+    Measure first, then reduce unnecessary reactive work: stable keys, smaller
+    components, memoized or computed expensive values, and virtual lists for large
+    data. For example, do not memoize everything before finding the hot path.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, frontend, performance]
+  is_active: true
+
+- id: rapid_frontend_hydration_perceived_perf_030
+  topic: frontend
+  subtopic: perceived_performance
+  difficulty: 3
+  trap_type: js_only_answer
+  question_text: >
+    How do you improve perceived performance on a slow page?
+  expected_answer:
+    must_have: [reduce blocking JavaScript, stream or progressively load content, show useful skeleton or reserved layout]
+    nice_to_have: [measure network backend and frontend separately]
+    red_flags: [spinner solves performance]
+  rubric:
+    must_have: [reduce blocking JavaScript, stream or progressively load content, show useful skeleton or reserved layout]
+    nice_to_have: [measure network backend and frontend separately]
+    red_flags: [spinner solves performance]
+  canonical_short_answer: >
+    Reduce blocking JavaScript, load the critical content first, and reserve
+    layout so the page feels stable. For example, stream or progressively render
+    real content rather than hiding all latency behind a spinner.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, frontend, performance]
+  is_active: true
+
+- id: rapid_js_column_to_integer_031
+  topic: javascript
+  subtopic: base_conversion
+  difficulty: 2
+  trap_type: off_by_one
+  question_text: >
+    Explain the algorithm for columnToInteger("AA") style base conversion.
+  expected_answer:
+    must_have: [accumulator times base plus digit, clarify A equals one or zero, handle off by one]
+    nice_to_have: [validate characters and consider large numbers]
+    red_flags: [concatenate digit strings]
+  rubric:
+    must_have: [accumulator times base plus digit, clarify A equals one or zero, handle off by one]
+    nice_to_have: [validate characters and consider large numbers]
+    red_flags: [concatenate digit strings]
+  canonical_short_answer: >
+    Treat it as base conversion: for each character, accumulator = accumulator * 26
+    + digit value. Clarify whether A maps to 1 like Excel or 0 in a custom spec;
+    for example, AA is 1 * 26 + 1 in Excel-style numbering.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, javascript, coding]
+  is_active: true
+
+- id: rapid_js_big_numbers_032
+  topic: javascript
+  subtopic: numbers
+  difficulty: 3
+  trap_type: safe_integer
+  question_text: >
+    What is the JavaScript integer precision caveat, and what do you do about it?
+  expected_answer:
+    must_have: [Number uses floating point, safe integer limit, use BigInt for exact large integers]
+    nice_to_have: [BigInt serialization and mixed Number operations caveats]
+    red_flags: [all integers are exact in JS]
+  rubric:
+    must_have: [Number uses floating point, safe integer limit, use BigInt for exact large integers]
+    nice_to_have: [BigInt serialization and mixed Number operations caveats]
+    red_flags: [all integers are exact in JS]
+  canonical_short_answer: >
+    JavaScript Number is floating point and only represents integers exactly up
+    to Number.MAX_SAFE_INTEGER. Use BigInt or string/domain-specific math for
+    exact large values, while handling JSON and mixed-type caveats.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, javascript, numbers]
+  is_active: true
+
+- id: rapid_js_parse_number_033
+  topic: javascript
+  subtopic: parsing
+  difficulty: 2
+  trap_type: implicit_coercion
+  question_text: >
+    How do you parse a number safely from user input?
+  expected_answer:
+    must_have: [validate format, convert explicitly, reject NaN and unsafe range]
+    nice_to_have: [avoid implicit coercion and choose integer versus decimal semantics]
+    red_flags: [use input times one without validation]
+  rubric:
+    must_have: [validate format, convert explicitly, reject NaN and unsafe range]
+    nice_to_have: [avoid implicit coercion and choose integer versus decimal semantics]
+    red_flags: [use input times one without validation]
+  canonical_short_answer: >
+    Validate the string format first, convert explicitly, then reject NaN,
+    Infinity, and values outside the allowed range. For example, parse an integer
+    with a regex plus Number.isSafeInteger when exact integer math matters.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, javascript, parsing]
+  is_active: true
+
+- id: rapid_js_implement_debounce_034
+  topic: javascript
+  subtopic: functions
+  difficulty: 2
+  trap_type: closure_timer
+  question_text: >
+    Describe how you would implement debounce in JavaScript.
+  expected_answer:
+    must_have: [closure stores timer id, clear previous timeout, set new timeout to call function]
+    nice_to_have: [preserve this args and optional leading edge]
+    red_flags: [set an interval for every event]
+  rubric:
+    must_have: [closure stores timer id, clear previous timeout, set new timeout to call function]
+    nice_to_have: [preserve this args and optional leading edge]
+    red_flags: [set an interval for every event]
+  canonical_short_answer: >
+    Debounce returns a wrapper that keeps a timer id in a closure. On each call,
+    clear the old timeout and schedule a new one; for example, a search handler
+    fires only after the user stops typing for 300 ms.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, javascript, coding]
+  is_active: true
+
+- id: rapid_js_frequency_count_035
+  topic: javascript
+  subtopic: data_structures
+  difficulty: 1
+  trap_type: wrong_structure
+  question_text: >
+    How do you count item frequencies in an array, and what detail matters in JS?
+  expected_answer:
+    must_have: [use Map or object, increment count per item, choose key handling deliberately]
+    nice_to_have: [Map avoids prototype key surprises]
+    red_flags: [nested loop for every count by default]
+  rubric:
+    must_have: [use Map or object, increment count per item, choose key handling deliberately]
+    nice_to_have: [Map avoids prototype key surprises]
+    red_flags: [nested loop for every count by default]
+  canonical_short_answer: >
+    Iterate once and store counts in a Map or object: count = (count || 0) + 1.
+    For example, Map is safer when keys are not simple trusted strings because
+    it avoids object prototype issues.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, javascript, coding]
+  is_active: true
+
+- id: rapid_js_unicode_reverse_036
+  topic: javascript
+  subtopic: strings
+  difficulty: 3
+  trap_type: unicode
+  question_text: >
+    What is the trap in reversing a string with split('').reverse().join('')?
+  expected_answer:
+    must_have: [UTF-16 code units not user-perceived characters, emoji or combining marks can break, use appropriate Unicode handling]
+    nice_to_have: [Intl Segmenter or library for grapheme clusters]
+    red_flags: [ASCII solution is always correct]
+  rubric:
+    must_have: [UTF-16 code units not user-perceived characters, emoji or combining marks can break, use appropriate Unicode handling]
+    nice_to_have: [Intl Segmenter or library for grapheme clusters]
+    red_flags: [ASCII solution is always correct]
+  canonical_short_answer: >
+    split('') works on UTF-16 code units, not necessarily user-perceived
+    characters, so emoji and combining marks can break. For example, use
+    grapheme-aware handling when correctness matters beyond ASCII.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, javascript, strings]
+  is_active: true
+
+- id: rapid_js_sort_comparator_037
+  topic: javascript
+  subtopic: sorting
+  difficulty: 2
+  trap_type: lexicographic_default
+  question_text: >
+    What JavaScript sort comparator mistake causes numeric sorting bugs?
+  expected_answer:
+    must_have: [default sort is string lexicographic, numeric comparator returns a minus b, comparator must be consistent]
+    nice_to_have: [avoid mutating input if caller expects immutability]
+    red_flags: [default sort sorts numbers numerically]
+  rubric:
+    must_have: [default sort is string lexicographic, numeric comparator returns a minus b, comparator must be consistent]
+    nice_to_have: [avoid mutating input if caller expects immutability]
+    red_flags: [default sort sorts numbers numerically]
+  canonical_short_answer: >
+    JavaScript's default sort converts values to strings, so numbers sort
+    lexicographically unless you pass (a, b) => a - b. For example, also remember
+    sort mutates the array and the comparator must be consistent.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, javascript, sorting]
+  is_active: true
+
+- id: rapid_unix_find_large_files_038
+  topic: unix
+  subtopic: files
+  difficulty: 1
+  trap_type: command_fluency
+  question_text: >
+    What commands would you use to find large files when a server disk is filling?
+  expected_answer:
+    must_have: [df checks filesystem usage, du finds directory sizes, find can list large files]
+    nice_to_have: [sort and tail to rank biggest paths]
+    red_flags: [delete random files first]
+  rubric:
+    must_have: [df checks filesystem usage, du finds directory sizes, find can list large files]
+    nice_to_have: [sort and tail to rank biggest paths]
+    red_flags: [delete random files first]
+  canonical_short_answer: >
+    Start with df -h to see full filesystems, then du -sh * or du -ah with sort
+    to find big directories and files. For example, use find with a size filter
+    before deleting anything.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, unix, ops]
+  is_active: true
+
+- id: rapid_unix_search_logs_039
+  topic: unix
+  subtopic: logs
+  difficulty: 1
+  trap_type: log_basics
+  question_text: >
+    Which commands do you reach for to search logs and count errors?
+  expected_answer:
+    must_have: [grep or zgrep searches, tail follows live logs, wc or awk counts]
+    nice_to_have: [less for inspection and journalctl when systemd is involved]
+    red_flags: [open huge logs in a GUI editor]
+  rubric:
+    must_have: [grep or zgrep searches, tail follows live logs, wc or awk counts]
+    nice_to_have: [less for inspection and journalctl when systemd is involved]
+    red_flags: [open huge logs in a GUI editor]
+  canonical_short_answer: >
+    Use grep or zgrep to search, tail -f to follow live output, and wc -l or awk
+    to count patterns. For example, grep ERROR app.log | wc -l gives a quick
+    count before deeper inspection with less.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, unix, logs]
+  is_active: true
+
+- id: rapid_unix_process_port_040
+  topic: unix
+  subtopic: processes
+  difficulty: 1
+  trap_type: port_conflict
+  question_text: >
+    How do you find and stop the process listening on a port?
+  expected_answer:
+    must_have: [lsof or ss shows process on port, ps shows process details, kill terminates intentionally]
+    nice_to_have: [try graceful signal before kill -9]
+    red_flags: [kill random PID without checking]
+  rubric:
+    must_have: [lsof or ss shows process on port, ps shows process details, kill terminates intentionally]
+    nice_to_have: [try graceful signal before kill -9]
+    red_flags: [kill random PID without checking]
+  canonical_short_answer: >
+    Use lsof -i :PORT or ss -lptn to identify the listener, inspect it with ps,
+    then send a deliberate signal. For example, try a normal kill before reaching
+    for kill -9.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, unix, ops]
+  is_active: true
+
+- id: rapid_unix_network_check_041
+  topic: unix
+  subtopic: networking
+  difficulty: 2
+  trap_type: wrong_layer
+  question_text: >
+    What quick commands help debug whether a URL or host is reachable?
+  expected_answer:
+    must_have: [curl checks HTTP, dig checks DNS, nc checks raw port connectivity]
+    nice_to_have: [traceroute or mtr for path issues]
+    red_flags: [ping proves HTTP works]
+  rubric:
+    must_have: [curl checks HTTP, dig checks DNS, nc checks raw port connectivity]
+    nice_to_have: [traceroute or mtr for path issues]
+    red_flags: [ping proves HTTP works]
+  canonical_short_answer: >
+    Use dig for DNS, curl -v for HTTP details, and nc -vz host port for raw
+    connectivity. For example, ping only tells you ICMP reachability, not whether
+    TLS or the HTTP service works.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, unix, networking]
+  is_active: true
+
+- id: rapid_unix_safe_xargs_042
+  topic: unix
+  subtopic: shell
+  difficulty: 2
+  trap_type: unsafe_bulk
+  question_text: >
+    What is the safe way to run a command over many matched files?
+  expected_answer:
+    must_have: [find selects files, xargs or exec runs command, handle spaces safely]
+    nice_to_have: [use -print0 with xargs -0 and preview before destructive commands]
+    red_flags: [rm unquoted glob output blindly]
+  rubric:
+    must_have: [find selects files, xargs or exec runs command, handle spaces safely]
+    nice_to_have: [use -print0 with xargs -0 and preview before destructive commands]
+    red_flags: [rm unquoted glob output blindly]
+  canonical_short_answer: >
+    Use find to select files and xargs or -exec to run the command, handling
+    spaces safely. For example, find ... -print0 | xargs -0 ... and preview
+    before any destructive operation.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, unix, shell]
+  is_active: true
+
+- id: rapid_product_slc_043
+  topic: product
+  subtopic: slc
+  difficulty: 2
+  trap_type: mvp_confusion
+  question_text: >
+    What does Simple, Lovable, Complete mean, and how is it different from a bad MVP?
+  expected_answer:
+    must_have: [small scope, lovable user experience, complete promised job]
+    nice_to_have: [learning speed without shipping broken broad scope]
+    red_flags: [ship broken pieces because MVP]
+  rubric:
+    must_have: [small scope, lovable user experience, complete promised job]
+    nice_to_have: [learning speed without shipping broken broad scope]
+    red_flags: [ship broken pieces because MVP]
+  canonical_short_answer: >
+    SLC means the first version is narrow, pleasant enough to use, and complete
+    for the job it promises. For example, ship one finished workflow rather than
+    five half-working MVP fragments.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, product, fpe]
+  is_active: true
+
+- id: rapid_product_100x_engineer_044
+  topic: product
+  subtopic: engineering_judgment
+  difficulty: 3
+  trap_type: speed_myth
+  question_text: >
+    Define the practical version of a 100x engineer in product-engineering terms.
+  expected_answer:
+    must_have: [not typing speed, understands business and customer pain, cuts complexity by changing scope]
+    nice_to_have: [removes the right small requirement with high implementation cost]
+    red_flags: [works alone and ignores roadmap]
+  rubric:
+    must_have: [not typing speed, understands business and customer pain, cuts complexity by changing scope]
+    nice_to_have: [removes the right small requirement with high implementation cost]
+    red_flags: [works alone and ignores roadmap]
+  canonical_short_answer: >
+    A 100x engineer is not just a faster typist; they understand customer pain,
+    business constraints, and implementation cost well enough to remove the small
+    requirement causing most of the complexity.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, product, fpe]
+  is_active: true
+
+- id: rapid_product_cold_start_045
+  topic: product
+  subtopic: growth
+  difficulty: 3
+  trap_type: network_effects
+  question_text: >
+    What is the Cold Start Problem, and how would you adapt it to devtools?
+  expected_answer:
+    must_have: [networked products need initial value before network exists, value can grow with users, devtools loops are usually team or public artifact based]
+    nice_to_have: [status pages dashboards incidents integrations or invites]
+    red_flags: [all devtools have social network effects]
+  rubric:
+    must_have: [networked products need initial value before network exists, value can grow with users, devtools loops are usually team or public artifact based]
+    nice_to_have: [status pages dashboards incidents integrations or invites]
+    red_flags: [all devtools have social network effects]
+  canonical_short_answer: >
+    The cold start problem is creating value before a network has participants.
+    In devtools, network effects are weaker than social apps, so examples are
+    teammate invites, shared dashboards, public status pages, and integrations.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, product, growth]
+  is_active: true
+
+- id: rapid_product_built_in_virality_046
+  topic: product
+  subtopic: distribution
+  difficulty: 3
+  trap_type: bolted_on_growth
+  question_text: >
+    What does built-in virality mean for a developer tool?
+  expected_answer:
+    must_have: [normal product use creates sharing, distribution is part of workflow, public or collaborative artifacts]
+    nice_to_have: [status pages incident reports badges shared dashboards]
+    red_flags: [add a referral button and call it viral]
+  rubric:
+    must_have: [normal product use creates sharing, distribution is part of workflow, public or collaborative artifacts]
+    nice_to_have: [status pages incident reports badges shared dashboards]
+    red_flags: [add a referral button and call it viral]
+  canonical_short_answer: >
+    Built-in virality means normal use naturally exposes or invites others, not
+    a bolted-on referral button. For example, public status pages, shared incident
+    reports, uptime badges, or dashboards can distribute a devtool.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, product, growth]
+  is_active: true
+
+- id: rapid_product_magic_moment_047
+  topic: product
+  subtopic: activation
+  difficulty: 2
+  trap_type: vanity_activation
+  question_text: >
+    Define magic moment and activation for an observability product.
+  expected_answer:
+    must_have: [magic moment is first felt value, activation is reaching meaningful value, not just signup]
+    nice_to_have: [example real alert detected routed and understood]
+    red_flags: [activation equals account created]
+  rubric:
+    must_have: [magic moment is first felt value, activation is reaching meaningful value, not just signup]
+    nice_to_have: [example real alert detected routed and understood]
+    red_flags: [activation equals account created]
+  canonical_short_answer: >
+    The magic moment is when the user first clearly feels value; activation is
+    reaching that meaningful state. For example, not signup, but a real monitor
+    detecting an incident, routing it, and making the cause understandable.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, product, growth]
+  is_active: true
+
+- id: rapid_product_north_star_048
+  topic: product
+  subtopic: metrics
+  difficulty: 2
+  trap_type: vanity_metric
+  question_text: >
+    What is a North Star metric, and what would be a bad one for observability?
+  expected_answer:
+    must_have: [represents delivered customer value, coordinates product focus, avoid vanity metrics]
+    nice_to_have: [resolved actionable incidents or monitors with useful alerts]
+    red_flags: [page views are always the North Star]
+  rubric:
+    must_have: [represents delivered customer value, coordinates product focus, avoid vanity metrics]
+    nice_to_have: [resolved actionable incidents or monitors with useful alerts]
+    red_flags: [page views are always the North Star]
+  canonical_short_answer: >
+    A North Star metric should represent delivered customer value and align the
+    team. For observability, page views would be weak; useful alerts resolved or
+    teams with monitored services and lower MTTR are closer to value.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, product, metrics]
+  is_active: true
+
+- id: rapid_product_ai_not_vibe_049
+  topic: product
+  subtopic: ai_assisted_engineering
+  difficulty: 2
+  trap_type: correctness_theater
+  question_text: >
+    How do you explain AI-assisted engineering without sounding like a vibe coder?
+  expected_answer:
+    must_have: [AI accelerates implementation, tests and reviews decide correctness, know when to debug by hand]
+    nice_to_have: [use types logs traces threat models and small diffs]
+    red_flags: [ship model output without reading it]
+  rubric:
+    must_have: [AI accelerates implementation, tests and reviews decide correctness, know when to debug by hand]
+    nice_to_have: [use types logs traces threat models and small diffs]
+    red_flags: [ship model output without reading it]
+  canonical_short_answer: >
+    AI accelerates drafting and exploration, but correctness comes from tests,
+    types, logs, traces, reviews, and threat models. For example, use an agent
+    for scaffolding but inspect the diff and verify behavior yourself.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, product, ai]
+  is_active: true
+
+- id: rapid_product_customer_demo_050
+  topic: product
+  subtopic: sales_demo
+  difficulty: 3
+  trap_type: feature_dump
+  question_text: >
+    How do you demo a technical product to a customer in two minutes?
+  expected_answer:
+    must_have: [start with customer pain, show one workflow to value, connect feature to outcome]
+    nice_to_have: [avoid feature dump and ask a discovery question]
+    red_flags: [list every feature in the UI]
+  rubric:
+    must_have: [start with customer pain, show one workflow to value, connect feature to outcome]
+    nice_to_have: [avoid feature dump and ask a discovery question]
+    red_flags: [list every feature in the UI]
+  canonical_short_answer: >
+    Start with the customer's pain, show one complete workflow that reaches
+    value, then connect the result to their outcome. For example, demo detecting
+    an incident, routing it, and understanding the cause instead of listing every tab.
+  canonical_deep_answer: null
+  tags: [rapid_fundamentals, betterstack, product, demo]
+  is_active: true

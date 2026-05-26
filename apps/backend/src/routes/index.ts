@@ -42,6 +42,7 @@ const modeSchema = z.enum([
   "system_design",
   "weak_topics",
   "mock_interview",
+  "rapid_fundamentals",
 ]);
 
 function userIdFromRequest(req: Request): string {
@@ -501,6 +502,7 @@ apiRouter.post(
       attempt_id: attempt.id,
       score: grade.score,
       verdict: grade.verdict,
+      covered_points: grade.covered_points ?? [],
       missed_points: grade.missed_points,
       ideal_short_answer: grade.ideal_short_answer,
       cards: persistedCards,
@@ -1099,6 +1101,7 @@ apiRouter.post(
       drill_id: drill.id,
       score: grade.score,
       verdict: grade.verdict,
+      covered_points: grade.covered_points ?? [],
       missed_points: grade.missed_points,
       ideal_short_answer: grade.ideal_short_answer,
       breakdown: grade.breakdown,
@@ -1237,6 +1240,7 @@ apiRouter.post("/realtime/tool-call", async (req: Request, res: Response) => {
             attempt_id: attempt.id,
             score: grade.score,
             verdict: grade.verdict,
+            covered_points: grade.covered_points ?? [],
             missed_points: grade.missed_points,
             ideal_short_answer: grade.ideal_short_answer,
             cards: persistedCards.map((c) => ({ front: c.front, back: c.back })),

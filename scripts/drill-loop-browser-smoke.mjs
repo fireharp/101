@@ -97,6 +97,7 @@ async function main() {
     await page.goto(frontendUrl, { waitUntil: "domcontentloaded" });
     await page.getByTestId("voice-provider-elevenlabs").click();
     await page.getByTestId("voice-provider-openai").click();
+    await page.getByTestId("mode-select").selectOption("rapid_fundamentals");
 
     await page.getByRole("button", { name: "Start session" }).click();
     await page.getByTestId("question").waitFor({ state: "visible", timeout: 10000 });
@@ -106,9 +107,9 @@ async function main() {
 
     const transcriptInput = page.getByTestId("transcript");
     await transcriptInput.fill(
-      "I would use a composite B-tree index on (category_id, price). " +
-        "Equality column first, ordered column second. I'd verify with " +
-        "EXPLAIN ANALYZE because selectivity and the actual query shape matter.",
+      "The direct answer is to name the core mechanism, explain why it matters in production, " +
+        "then add a caveat and tiny example. For example, with SQL injection, user input changes query structure, " +
+        "so parameters keep it as data; dynamic identifiers still need an allowlist.",
     );
 
     await page.getByTestId("submit-answer").click();
@@ -116,11 +117,21 @@ async function main() {
 
     const scoreText = (await page.getByTestId("grade-score").innerText()).trim();
     const verdict = (await page.getByTestId("grade-verdict").innerText()).trim();
-    if (!/^\d+$/.test(scoreText)) {
-      throw new Error(`grade-score is not numeric: ${scoreText}`);
+    if (!/^\d+(\.\d)?\/5$/.test(scoreText)) {
+      throw new Error(`rapid grade-score is not x/5: ${scoreText}`);
     }
     if (!["pass", "borderline", "fail"].includes(verdict)) {
       throw new Error(`unexpected verdict: ${verdict}`);
+    }
+    if (verdict !== "pass") {
+      await page.getByText("Missed", { exact: true }).waitFor({
+        state: "visible",
+        timeout: 5000,
+      });
+      await page.getByText("Generated cards", { exact: true }).waitFor({
+        state: "visible",
+        timeout: 5000,
+      });
     }
 
     // If this verdict isn't a pass, the "Try again" button should render.
@@ -246,7 +257,8 @@ async function main() {
           firstQuestionPreview: q1.slice(0, 80),
           secondQuestionPreview: q2.slice(0, 80),
           questionsDistinct: q1 !== q2,
-          gradeScore: Number(scoreText),
+          gradeScore: Number.parseFloat(scoreText),
+          rapidGradeScore: scoreText,
           gradeVerdict: verdict,
           historyRowCount,
           auditEventTypes: eventTypes,

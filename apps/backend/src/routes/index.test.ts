@@ -93,6 +93,37 @@ const fixtures: Parameters<typeof drills.upsert>[0][] = [
     tags: ["test", "gen:llm"],
     is_active: false,
   },
+  {
+    id: "fx_rapid_001",
+    topic: "security",
+    subtopic: "sql_injection",
+    difficulty: 2,
+    trap_type: "unsafe_string_concat",
+    question_text: "In 30 seconds, explain SQL injection and the safe default.",
+    expected_answer: {
+      must_have: [
+        "user input changes query structure",
+        "parameterized queries",
+        "no string interpolation",
+      ],
+      nice_to_have: ["allowlist dynamic identifiers"],
+      red_flags: ["escaping alone is enough"],
+    },
+    rubric: {
+      must_have: [
+        "user input changes query structure",
+        "parameterized queries",
+        "no string interpolation",
+      ],
+      nice_to_have: ["allowlist dynamic identifiers"],
+      red_flags: ["escaping alone is enough"],
+    },
+    canonical_short_answer:
+      "SQL injection is user input changing query structure; parameters keep input as values.",
+    canonical_deep_answer: null,
+    tags: ["test", "rapid_fundamentals", "betterstack"],
+    is_active: true,
+  },
 ];
 for (const d of fixtures) drills.upsert(d);
 
@@ -184,6 +215,40 @@ test("session create → next drill → grade → summary round-trip", async () 
   assert.equal(summary.json.drills_attempted, 1);
   assert.equal(summary.json.drills_graded, 1);
   assert.equal(summary.json.usage.total_tokens, 0);
+});
+
+test("rapid_fundamentals route round-trip returns tagged rapid drill and grades on 0-5 profile", async () => {
+  const sess = await http<{ session: { id: string; mode: string } }>(
+    "POST",
+    "/api/drill-sessions",
+    { mode: "rapid_fundamentals" },
+  );
+  assert.equal(sess.status, 200);
+  assert.equal(sess.json.session.mode, "rapid_fundamentals");
+
+  const next = await http<{
+    drill: { drill_id: string; attempt_id: string; topic: string };
+  }>("POST", `/api/drill-sessions/${sess.json.session.id}/next`, {});
+  assert.equal(next.status, 200);
+  assert.equal(next.json.drill.drill_id, "fx_rapid_001");
+
+  const grade = await http<{
+    score: number;
+    verdict: "pass" | "borderline" | "fail";
+    breakdown: { tradeoff_coverage: number };
+  }>(
+    "POST",
+    `/api/drill-attempts/${next.json.drill.attempt_id}/grade`,
+    {
+      transcript:
+        "SQL injection is when user input changes query structure. Use parameterized queries, not string interpolation. Dynamic identifiers need allowlists. For example, quote OR 1 equals 1 remains a value.",
+      duration_seconds: 30,
+    },
+  );
+  assert.equal(grade.status, 200);
+  assert.equal(grade.json.verdict, "pass");
+  assert.ok(grade.json.score >= 0.8);
+  assert.equal(grade.json.breakdown.tradeoff_coverage, 1);
 });
 
 test("session ownership is enforced", async () => {

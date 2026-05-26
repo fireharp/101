@@ -3,7 +3,8 @@ export type Mode =
   | "db_indexes"
   | "system_design"
   | "weak_topics"
-  | "mock_interview";
+  | "mock_interview"
+  | "rapid_fundamentals";
 
 export interface DrillPayload {
   drill_id: string;
@@ -66,6 +67,7 @@ export interface GradeResult {
   attempt_id: string;
   score: number;
   verdict: "pass" | "borderline" | "fail";
+  covered_points?: string[];
   missed_points: string[];
   ideal_short_answer: string;
   cards: { id?: string; front: string; back: string }[];

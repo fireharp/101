@@ -44,6 +44,25 @@ test("offline grader scores a strong rubric-aligned answer well", async () => {
   assert.equal(result.breakdown.must_have_coverage, 1);
 });
 
+test("offline grader gives semantic partial credit for API rollout wording", async () => {
+  const result = await gradeAttempt({
+    drill: Drill.apiVersioningQuestion(),
+    transcript:
+      "I'll add a new one, keep the old one for a while, keep monitoring the old one, when the old one is at some 0.01% of usage, I will just deprecate it, but to be honest I don't have to deprecate it at all, it just may happen at some point.",
+    duration_seconds: 45,
+  });
+  assert.equal(result.verdict, "borderline");
+  assert.ok(result.score >= 0.6, `expected partial credit, got ${result.score}`);
+  assert.ok(
+    result.covered_points?.some((point) => point.includes("dual emit")),
+    `expected covered rollout point, got ${result.covered_points?.join(", ")}`,
+  );
+  assert.ok(
+    result.missed_points.some((point) => point.includes("timeline")),
+    `expected clearer timeline miss, got ${result.missed_points.join(", ")}`,
+  );
+});
+
 test("offline grader applies red-flag penalty for dangerous phrasing", async () => {
   const result = await gradeAttempt({
     drill: Drill.indexQuestion(),
@@ -84,4 +103,42 @@ test("offline grader penalises overly short answers via clarity", async () => {
     result.breakdown.answer_clarity <= 0.4,
     `short answer should have low clarity, got ${result.breakdown.answer_clarity}`,
   );
+});
+
+test("rapid grader passes complete 30-second definition/caveat/example answers", async () => {
+  const result = await gradeAttempt({
+    drill: Drill.rapidSecurityQuestion(),
+    transcript:
+      "SQL injection is when user input changes the structure of a query. Use parameterized queries and do not interpolate values into SQL strings. The caveat is dynamic table or column names need an allowlist. For example, an email field containing quote OR 1 equals 1 should stay a value, not become SQL.",
+    duration_seconds: 32,
+  });
+  assert.equal(result.verdict, "pass");
+  assert.ok(result.score >= 0.8, `expected pass score, got ${result.score}`);
+  assert.equal(result.breakdown.tradeoff_coverage, 1);
+});
+
+test("rapid grader caps missing caveat answers at borderline", async () => {
+  const result = await gradeAttempt({
+    drill: Drill.rapidSecurityQuestion(),
+    transcript:
+      "SQL injection is user input changing query structure. Use parameterized queries and never interpolate user values into SQL. For example, an attacker puts OR 1 equals 1 in an email field and it remains a value.",
+    duration_seconds: 28,
+  });
+  assert.equal(result.verdict, "borderline");
+  assert.ok(
+    result.missed_points.includes("caveat/tradeoff"),
+    `expected caveat miss, got ${result.missed_points.join(", ")}`,
+  );
+});
+
+test("rapid grader fails dangerous red flags", async () => {
+  const result = await gradeAttempt({
+    drill: Drill.rapidSecurityQuestion(),
+    transcript:
+      "SQL injection is about bad SQL. Escaping alone is enough in practice, like replacing quotes before concatenating the query string.",
+    duration_seconds: 22,
+  });
+  assert.equal(result.verdict, "fail");
+  assert.ok(result.score < 0.6, `expected fail score, got ${result.score}`);
+  assert.ok(result.breakdown.red_flag_penalty > 0);
 });

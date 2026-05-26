@@ -6,12 +6,19 @@ export type Mode =
   | "system_design"
   | "weak_topics"
   | "mock_interview"
-  | "rapid_fundamentals";
+  | "rapid_fundamentals"
+  | "betterstack_peterheinz";
 
 export interface Rubric {
   must_have: string[];
   nice_to_have: string[];
   red_flags: string[];
+}
+
+export interface PracticalExample {
+  use_case: string;
+  why_it_fits: string;
+  gotcha: string;
 }
 
 export interface DrillItem {
@@ -25,6 +32,7 @@ export interface DrillItem {
   rubric: Rubric;
   canonical_short_answer: string;
   canonical_deep_answer: string | null;
+  examples: PracticalExample[];
   tags: string[];
   is_active: boolean;
   created_at: string;
@@ -41,6 +49,7 @@ export interface DrillItemRow {
   rubric: string;
   canonical_short_answer: string;
   canonical_deep_answer: string | null;
+  examples: string | null;
   tags: string;
   is_active: number;
   created_at: string;
@@ -69,6 +78,7 @@ export interface GeneratedCard {
   topic?: string;
   subtopic?: string;
   next_due_at?: string;
+  examples?: PracticalExample[];
 }
 
 export interface TokenUsage {
@@ -103,6 +113,7 @@ export interface GradingResult {
   covered_points?: string[];
   missed_points: string[];
   ideal_short_answer: string;
+  examples?: PracticalExample[];
   follow_up_drills: string[];
   cards: GeneratedCard[];
   usage?: TokenUsage;
@@ -113,4 +124,28 @@ export interface GradingResult {
     speed_score: number;
     red_flag_penalty: number;
   };
+}
+
+export type GradingEvaluationProvider = "openrouter";
+
+export interface GradingEvaluation {
+  id: string;
+  user_id: string;
+  session_id: string;
+  attempt_id: string;
+  drill_id: string;
+  provider: GradingEvaluationProvider;
+  model: string;
+  score: number | null;
+  verdict: "pass" | "borderline" | "fail" | null;
+  covered_points: string[] | null;
+  missed_points: string[] | null;
+  ideal_answer: string | null;
+  raw_json: Record<string, unknown> | null;
+  latency_ms: number | null;
+  error: string | null;
+  estimated_cost_usd: number | null;
+  prompt_hash: string;
+  created_at: string;
+  cached?: boolean;
 }

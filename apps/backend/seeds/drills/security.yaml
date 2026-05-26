@@ -35,6 +35,10 @@
     use SHA-256 alone or encryption — passwords must be one-way and
     expensive to brute force.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Storing credentials for a public signup and login flow."
+      why_it_fits: "A slow salted KDF limits offline cracking after a database leak."
+      gotcha: "SHA-256 with a salt is still too fast for password storage."
   tags: [auth, security]
   is_active: true
 
@@ -75,5 +79,9 @@
     keep a small revocation list / per-user version field that the server
     checks. Logging out a stolen long-lived JWT is otherwise impossible.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Mobile API access tokens with refresh-token rotation."
+      why_it_fits: "Short JWT TTLs bound stolen-token damage while refresh state enables revocation."
+      gotcha: "Deleting a local token does not invalidate copies already stolen."
   tags: [auth, jwt]
   is_active: true

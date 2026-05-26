@@ -1,0 +1,388 @@
+- id: auth_tokens_refresh_flow_001
+  topic: security
+  subtopic: token_lifecycle
+  difficulty: 3
+  trap_type: refresh_token_as_api_token
+  question_text: >
+    Walk through the access-token plus refresh-token flow. Which token goes to
+    the resource server, which one goes to the auth server, and why?
+  expected_answer:
+    must_have:
+      - access token is short-lived and sent to resource server
+      - refresh token is long-lived and sent only to auth server or token endpoint
+      - auth server checks refresh token validity and revocation before issuing new access token
+      - refresh tokens balance security with user experience
+    nice_to_have:
+      - refresh token should be stored more carefully than access token
+      - resource server usually should not accept refresh tokens
+      - access token expiry limits stolen-token misuse window
+    red_flags:
+      - use refresh token directly to call APIs
+      - refresh token never needs server-side state
+  rubric:
+    must_have:
+      - access token for protected resources
+      - refresh token for renewal
+      - auth server validity/revocation check
+      - short-lived access token rationale
+    nice_to_have:
+      - storage distinction
+      - resource server rejects refresh token
+    red_flags:
+      - treat refresh token as bearer API credential
+      - no revocation check
+  canonical_short_answer: >
+    The client uses a short-lived access token when calling resource servers.
+    When it expires, the client sends the refresh token to the auth server's
+    token endpoint, not to normal APIs. The auth server checks that the refresh
+    token is valid and not revoked, then issues a new short-lived access token.
+    This keeps API calls mostly stateless while limiting damage from a stolen
+    access token and preserving user experience.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Mobile app calls an orders API after the access token expires."
+      why_it_fits: "The app renews through the auth server instead of sending refresh tokens to APIs."
+      gotcha: "A resource server should reject refresh tokens, even if they look valid."
+  tags: [auth, jwt, refresh_tokens, access_tokens, security]
+  is_active: true
+
+- id: auth_tokens_refresh_rotation_002
+  topic: security
+  subtopic: token_lifecycle
+  difficulty: 4
+  trap_type: stolen_refresh_token
+  question_text: >
+    A refresh token can live for days or weeks. What controls do you add so a
+    stolen refresh token does not silently work forever?
+  expected_answer:
+    must_have:
+      - store refresh tokens server-side or store hashed token identifiers
+      - rotate refresh tokens on every use
+      - detect reuse of an old refresh token and revoke the token family/session
+      - bind expiry and revocation to the auth server state
+    nice_to_have:
+      - device/session identifiers
+      - risk-based reauthentication
+      - secure cookie with HttpOnly SameSite Secure for browser clients
+    red_flags:
+      - long-lived refresh token with no server-side record
+      - keep accepting old refresh tokens after rotation
+  rubric:
+    must_have:
+      - server-side refresh-token state
+      - rotation
+      - reuse detection
+      - revocation/expiry enforcement
+    nice_to_have:
+      - device/session model
+      - browser cookie hardening
+    red_flags:
+      - permanent bearer token
+      - no theft detection
+  canonical_short_answer: >
+    Treat refresh tokens like high-value credentials. Keep server-side state
+    for them, preferably storing only hashed token identifiers, rotate the
+    refresh token whenever it is used, and reject reuse of an old token. Reuse
+    usually means theft, so revoke the token family or session and require
+    reauthentication. Refresh expiry and revocation are enforced at the auth
+    server.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Browser session refreshes tokens from an HttpOnly cookie."
+      why_it_fits: "Rotation plus reuse detection turns a copied old token into a detectable signal."
+      gotcha: "Accepting the previous refresh token indefinitely defeats theft detection."
+  tags: [auth, refresh_tokens, revocation, security]
+  is_active: true
+
+- id: auth_tokens_session_vs_jwt_003
+  topic: system_design
+  subtopic: authentication
+  difficulty: 3
+  trap_type: oversimplified_stateless_claim
+  question_text: >
+    Compare session-based authentication with JWT-based authentication for
+    invalidation and scaling. When would sessions be the better fit?
+  expected_answer:
+    must_have:
+      - sessions require a server-side store for session state
+      - sessions are easy to invalidate immediately
+      - session store adds scaling complexity latency and failure modes
+      - JWT access tokens are easier for stateless resource-server scaling but harder to revoke before expiry
+    nice_to_have:
+      - centralized store like Redis avoids sticky-session-only design
+      - short-lived JWTs plus refresh tokens mitigate revocation gap
+      - choose sessions for high-risk apps requiring instant logout
+    red_flags:
+      - JWT logout is always instant by deleting local storage
+      - sessions cannot scale horizontally
+  rubric:
+    must_have:
+      - server-side session state
+      - immediate invalidation benefit
+      - session store latency/failure tradeoff
+      - JWT revocation gap
+    nice_to_have:
+      - Redis/shared session store
+      - short-lived access token mitigation
+    red_flags:
+      - deny session scalability
+      - ignore token expiry window
+  canonical_short_answer: >
+    Sessions keep server-side state, so logout and admin revocation can be
+    immediate by deleting or marking the session invalid. The cost is a shared
+    session store, often Redis, which adds lookup latency, scaling work, and a
+    new failure mode. JWT access tokens scale well for resource servers because
+    they can verify locally, but a stolen token usually works until expiry
+    unless you add state. Use sessions when instant invalidation is central.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Admin panel requires immediate account disablement after fraud review."
+      why_it_fits: "Server-side sessions can be invalidated before the next request succeeds."
+      gotcha: "The shared session store becomes part of the request path."
+  tags: [auth, sessions, jwt, redis, system_design]
+  is_active: true
+
+- id: auth_tokens_microservice_jwt_004
+  topic: system_design
+  subtopic: authentication
+  difficulty: 3
+  trap_type: stateless_without_caveats
+  question_text: >
+    In a microservice architecture, an auth service issues JWTs and resource
+    services verify them locally. What does this improve, and what caveats
+    remain?
+  expected_answer:
+    must_have:
+      - resource services can verify token signature without calling auth service on every request
+      - reduces central session-store or auth-service latency on protected-resource calls
+      - claims may become stale until token expiry
+      - revocation and permission changes need short TTLs or stateful checks
+    nice_to_have:
+      - use issuer audience and scopes per service
+      - distribute public keys through JWKS for asymmetric tokens
+      - avoid putting too much authorization state in tokens
+    red_flags:
+      - JWT means permissions update instantly everywhere
+      - every service should trust any signed JWT regardless of audience
+  rubric:
+    must_have:
+      - local verification benefit
+      - less per-request auth dependency
+      - stale-claim caveat
+      - revocation strategy
+    nice_to_have:
+      - aud/scope per service
+      - JWKS/public key distribution
+    red_flags:
+      - no audience validation
+      - no expiry/revocation plan
+  canonical_short_answer: >
+    JWTs let resource services verify the issuer's signature locally, so normal
+    API calls do not need a central session-store lookup or auth-service
+    round-trip. That helps scaling and latency in microservices. The caveat is
+    stale authorization: changed roles, logout, or account disablement may not
+    take effect until the access token expires unless services do a stateful
+    check. Keep access tokens short-lived and validate issuer, audience, scopes,
+    and keys per service.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Payments and orders services verify access tokens without calling auth."
+      why_it_fits: "Local signature verification removes a central auth dependency on each API call."
+      gotcha: "Role changes can stay stale until expiry unless high-risk paths check current state."
+  tags: [auth, jwt, microservices, system_design]
+  is_active: true
+
+- id: auth_tokens_access_ttl_tradeoff_005
+  topic: security
+  subtopic: token_lifecycle
+  difficulty: 2
+  trap_type: long_lived_access_token
+  question_text: >
+    Why use a short-lived access token, often around minutes, together with a
+    longer-lived refresh token?
+  expected_answer:
+    must_have:
+      - access token theft window is limited by short expiry
+      - refresh token preserves user experience by renewing in the background
+      - refresh token can be checked against server-side revocation state
+      - TTL depends on risk and product requirements
+    nice_to_have:
+      - high-risk apps use shorter TTLs and more reauth
+      - refresh token should have stronger storage controls
+    red_flags:
+      - make access tokens last weeks for convenience
+      - refresh tokens are sent on every API request
+  rubric:
+    must_have:
+      - misuse window reduction
+      - background renewal UX
+      - revocation check at refresh
+      - risk-based TTL
+    nice_to_have:
+      - stronger refresh storage
+      - high-risk reauth
+    red_flags:
+      - long-lived access token by default
+      - no distinction between token types
+  canonical_short_answer: >
+    A short-lived access token limits how long a stolen bearer token can be used.
+    The refresh token keeps the user signed in by obtaining new access tokens
+    from the auth server in the background. Because refresh goes through the auth
+    server, it can check revocation and session state. The exact TTL is a risk
+    decision: banking may use minutes, while lower-risk apps may tolerate longer
+    windows.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Banking app keeps users signed in while limiting stolen API-token use."
+      why_it_fits: "Minute-scale access TTLs cap misuse while refresh state preserves UX."
+      gotcha: "Long-lived access tokens bypass the revocation point."
+  tags: [auth, jwt, access_tokens, refresh_tokens, security]
+  is_active: true
+
+- id: auth_tokens_revocation_scenarios_006
+  topic: security
+  subtopic: token_lifecycle
+  difficulty: 4
+  trap_type: stateless_revocation_blindspot
+  question_text: >
+    Give practical scenarios where a valid signed JWT still hurts you after
+    logout, password reset, role downgrade, or tenant removal. What should the
+    API do?
+  expected_answer:
+    must_have:
+      - logout only deletes the client's copy unless the backend checks revocation state
+      - password reset should invalidate old tokens using iat password_changed_at token_version or session state
+      - role or tenant changes can leave stale authorization claims until expiry
+      - high-risk actions should check current permissions or session state
+    nice_to_have:
+      - multi-tenant data isolation risk
+      - short TTL limits exposure but is not instant revocation
+      - coarse identity in JWT and current authz in DB/cache
+    red_flags:
+      - valid signature always means current authorization
+      - deleting localStorage logs out stolen tokens everywhere
+  rubric:
+    must_have:
+      - logout stolen-token caveat
+      - password-reset invalidation strategy
+      - stale role/tenant claim risk
+      - stateful check for high-risk actions
+    nice_to_have:
+      - multi-tenant example
+      - short TTL tradeoff
+    red_flags:
+      - signature equals authorization
+      - no backend revocation path
+  canonical_short_answer: >
+    A signed JWT is not a live session check. If an attacker copied a token,
+    logout only deletes the user's copy; the stolen token can work until exp.
+    Password resets should reject tokens issued before password_changed_at or
+    with an old token/session version. Role downgrades and tenant removals can
+    leave stale claims, so sensitive APIs should check current permissions or
+    session state. Short TTLs reduce the window; they do not make revocation
+    instant.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Tenant admin removes a contractor while their access token is still valid."
+      why_it_fits: "Sensitive tenant APIs should check current membership, not only signed claims."
+      gotcha: "A valid signature can carry stale authorization."
+  tags: [auth, jwt, revocation, authorization, security]
+  is_active: true
+
+- id: auth_tokens_revocation_state_patterns_007
+  topic: security
+  subtopic: token_lifecycle
+  difficulty: 4
+  trap_type: fake_stateless_security
+  question_text: >
+    Compare a JWT denylist using jti, a per-user token_version, and a sessions
+    table with sid in the token. What does each revoke well, and what tradeoff
+    do they introduce?
+  expected_answer:
+    must_have:
+      - jti denylist can revoke individual tokens until expiry
+      - token_version can revoke all tokens for a user or category cheaply
+      - sessions table supports per-device/session revocation and active-device tracking
+      - all introduce state lookup so verification is no longer fully stateless
+    nice_to_have:
+      - store token digest not raw token in denylist
+      - TTL cleanup for denylist entries
+      - fail-open versus fail-closed decision if Redis/cache is down
+    red_flags:
+      - denylist with no expiry cleanup
+      - raw JWTs stored in logs or revocation tables
+  rubric:
+    must_have:
+      - jti individual revoke
+      - token version global/user revoke
+      - sid/session table per-device revoke
+      - stateful tradeoff
+    nice_to_have:
+      - token digest
+      - Redis failure policy
+    red_flags:
+      - pretend revocation is free
+      - store bearer tokens unnecessarily
+  canonical_short_answer: >
+    A jti denylist revokes specific tokens but needs a lookup and TTL cleanup
+    until token expiry; store a digest, not the raw bearer token. A user
+    token_version is cheap and great for password reset or logout-all, but not
+    one device unless the version is per session. A sessions table with sid gives
+    per-device revocation and active-device visibility. All of these trade pure
+    stateless verification for real revocation semantics.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "User clicks logout from one device versus logout from all devices."
+      why_it_fits: "Session ids handle one device; token_version handles broad user invalidation."
+      gotcha: "Every revocation pattern adds state or lookup failure behavior."
+  tags: [auth, jwt, revocation, sessions, security]
+  is_active: true
+
+- id: auth_tokens_storage_and_leakage_008
+  topic: security
+  subtopic: token_storage
+  difficulty: 3
+  trap_type: bearer_token_leakage
+  question_text: >
+    Where do JWTs commonly leak in real systems, and what mitigations should
+    you mention in an interview?
+  expected_answer:
+    must_have:
+      - localStorage is readable by injected JavaScript during XSS
+      - Authorization headers and tokens must be redacted from logs APM and error reports
+      - never put bearer tokens in URLs because URLs leak through logs history and referrers
+      - signed JWTs are readable and should not contain secrets
+    nice_to_have:
+      - HttpOnly Secure SameSite cookies reduce direct JS theft but require CSRF thinking
+      - short TTL and narrow scopes reduce blast radius
+      - small clock-skew leeway for exp nbf iat
+    red_flags:
+      - base64url means encrypted
+      - XSS cannot steal tokens from localStorage
+  rubric:
+    must_have:
+      - XSS/localStorage risk
+      - log redaction
+      - URL leakage
+      - signed not encrypted
+    nice_to_have:
+      - cookie CSRF tradeoff
+      - short TTL and scopes
+      - clock skew
+    red_flags:
+      - expose JWT in query string
+      - put sensitive data in claims
+  canonical_short_answer: >
+    JWTs leak through localStorage under XSS, browser extensions, crash reports,
+    proxy/access logs, APM breadcrumbs, copied curl commands, and especially URL
+    query strings. Redact Authorization headers everywhere, never put bearer
+    tokens in URLs, keep claims minimal because signing is not encryption, and
+    use short TTLs and narrow scopes. Browser apps often prefer HttpOnly Secure
+    SameSite cookies for refresh tokens, with CSRF controls.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Frontend error reporter captures request headers after an auth failure."
+      why_it_fits: "Authorization redaction prevents bearer tokens from leaking into observability tools."
+      gotcha: "Signed JWT payloads are readable, so claims should not contain secrets."
+  tags: [auth, jwt, xss, logging, security]
+  is_active: true

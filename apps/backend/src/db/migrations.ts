@@ -143,7 +143,37 @@ export function runMigrations(): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_events_response
       ON usage_events(response_id)
       WHERE response_id IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS grading_evaluations (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      attempt_id TEXT NOT NULL REFERENCES drill_attempts(id),
+      drill_id TEXT NOT NULL REFERENCES drill_items(id),
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      score REAL,
+      verdict TEXT,
+      covered_points TEXT,
+      missed_points TEXT,
+      ideal_answer TEXT,
+      raw_json TEXT,
+      latency_ms INTEGER,
+      error TEXT,
+      estimated_cost_usd REAL,
+      prompt_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_grading_evaluations_attempt
+      ON grading_evaluations(attempt_id, created_at DESC);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_grading_evaluations_cache
+      ON grading_evaluations(attempt_id, provider, model, prompt_hash);
   `);
+
+  addColumnIfMissing("drill_items", "examples", "TEXT NOT NULL DEFAULT '[]'");
+  addColumnIfMissing("generated_cards", "examples", "TEXT NOT NULL DEFAULT '[]'");
 
   // One-off backfill for DBs created before we switched defaults from naive
   // 'YYYY-MM-DD HH:MM:SS' to ISO 8601 'YYYY-MM-DDTHH:MM:SS.sssZ'. The naive
@@ -162,6 +192,7 @@ export function runMigrations(): void {
     { table: "generated_cards", columns: ["created_at", "next_due_at"] },
     { table: "session_events", columns: ["created_at"] },
     { table: "usage_events", columns: ["created_at"] },
+    { table: "grading_evaluations", columns: ["created_at"] },
   ];
   for (const { table, columns } of normaliseColumns) {
     for (const col of columns) {
@@ -173,4 +204,12 @@ export function runMigrations(): void {
       ).run();
     }
   }
+}
+
+function addColumnIfMissing(table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as {
+    name: string;
+  }[];
+  if (columns.some((c) => c.name === column)) return;
+  db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
 }

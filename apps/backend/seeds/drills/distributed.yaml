@@ -36,6 +36,10 @@
     rejects writes, and serves only stale reads if you allow non-linearizable
     reads. When the partition heals, the minority catches up from the log.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Five-node etcd cluster loses connectivity between two AZs."
+      why_it_fits: "The three-node side keeps quorum and can commit replicated log entries."
+      gotcha: "Minority-side reads are stale unless the system refuses them."
   tags: [raft, consensus, cap]
   is_active: true
 
@@ -76,6 +80,10 @@
     timestamps, vector clocks, or hybrid logical clocks. Use the wall clock
     only for human display and durations from a monotonic source.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Two regions update the same user profile with last-write-wins."
+      why_it_fits: "Logical versions describe causality better than unsynchronized wall time."
+      gotcha: "NTP reduces drift but does not make timestamps a safe conflict resolver."
   tags: [distributed, time]
   is_active: true
 
@@ -117,5 +125,9 @@
     outbox plus async retries — accept eventual consistency where the
     business allows.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Checkout spans inventory reservation, payment capture, and shipping."
+      why_it_fits: "A saga can retry or compensate each step without holding cross-service locks."
+      gotcha: "Compensation must be a real business action, not just a technical rollback."
   tags: [distributed, transactions, sagas]
   is_active: true

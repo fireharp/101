@@ -15,7 +15,8 @@ import { z } from "zod";
 import { runMigrations } from "./db/migrations.js";
 import { drills } from "./db/repo.js";
 import { config } from "./config.js";
-import type { DrillItem, Rubric } from "./types.js";
+import { practicalExampleSchema } from "./drill-seed-schema.js";
+import type { DrillItem, PracticalExample, Rubric } from "./types.js";
 
 const rubricTemplateSchema = z.object({
   must_have: z.array(z.string()),
@@ -37,6 +38,7 @@ const templateSchema = z.object({
   template_text: z.string(),
   canonical_answer_template: z.string(),
   rubric_template: rubricTemplateSchema,
+  examples: z.array(practicalExampleSchema).optional().default([]),
   tags: z.array(z.string()).optional().default([]),
   variants: z.array(variantSchema),
 });
@@ -54,6 +56,17 @@ function expandRubric(
     nice_to_have: rubric.nice_to_have.map((s) => interp(s, vars)),
     red_flags: rubric.red_flags.map((s) => interp(s, vars)),
   };
+}
+
+function expandExamples(
+  examples: PracticalExample[],
+  vars: Record<string, string>,
+): PracticalExample[] {
+  return examples.map((example) => ({
+    use_case: interp(example.use_case, vars),
+    why_it_fits: interp(example.why_it_fits, vars),
+    gotcha: interp(example.gotcha, vars),
+  }));
 }
 
 export function expandTemplatesFromDir(
@@ -94,6 +107,7 @@ export function expandTemplatesFromDir(
           variant.vars,
         ),
         canonical_deep_answer: null,
+        examples: expandExamples(t.examples, variant.vars),
         tags: [...(t.tags ?? []), `tmpl:${t.id}`],
         is_active: true,
       };

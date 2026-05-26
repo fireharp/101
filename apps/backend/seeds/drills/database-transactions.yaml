@@ -37,6 +37,10 @@
     then write. Both cost throughput; pick based on contention and the
     business cost of a wrong total.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Recalculating an invoice total while users add line items."
+      why_it_fits: "The transaction must see a stable set of rows before writing the balance."
+      gotcha: "Serializable failures are expected and need bounded retry logic."
   tags: [postgres, transactions, isolation]
   is_active: true
 
@@ -79,6 +83,10 @@
     transaction per statement, set idle_in_transaction_session_timeout, and
     enforce statement_timeout for ad-hoc queries.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Analyst leaves a BI query open in a transaction on the primary."
+      why_it_fits: "The old snapshot holds back cleanup for high-churn tables."
+      gotcha: "Tuning autovacuum alone will not fix an old transaction horizon."
   tags: [postgres, vacuum, performance]
   is_active: true
 
@@ -120,5 +128,9 @@
     signal in the application. Increasing deadlock_timeout only hides the
     problem.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Order worker updates inventory and shipment rows in mixed order."
+      why_it_fits: "A global lock order removes the circular wait."
+      gotcha: "Retries must be idempotent or they can duplicate side effects."
   tags: [postgres, locks, transactions]
   is_active: true

@@ -37,6 +37,10 @@
     at-least-once so consumers must be idempotent. CDC tools like Debezium
     are an alternative relay.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Order service stores an order and emits OrderCreated to Kafka."
+      why_it_fits: "The outbox row commits atomically with the order before a relay publishes it."
+      gotcha: "Relay retries can duplicate events, so consumers need idempotency keys."
   tags: [kafka, outbox, eventing]
   is_active: true
 
@@ -77,5 +81,9 @@
     within a partition. Pick a partition count that bounds per-consumer
     throughput and watch out for hot orders that overload a single partition.
   canonical_deep_answer: null
+  examples:
+    - use_case: "OrderCreated, OrderPaid, and OrderShipped must process in order per order."
+      why_it_fits: "Keying by order_id keeps each order's sequence in one partition."
+      gotcha: "Global ordering across all orders is not available without sacrificing throughput."
   tags: [kafka, ordering, streaming]
   is_active: true

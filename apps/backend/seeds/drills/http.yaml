@@ -36,6 +36,10 @@
     it so. Use PUT to replace at a known id, POST to create when the server
     assigns the id, PATCH for partial field updates.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Order shipping address update"
+      why_it_fits: "PUT can replace the known address resource; PATCH can update just postal_code."
+      gotcha: "POST /orders may create duplicates unless you add an idempotency key."
   tags: [http, rest, api]
   is_active: true
 
@@ -77,5 +81,9 @@
     validation errors, 401/403 for auth, 5xx only for server faults. RFC
     7807 problem+json is a good error body format.
   canonical_deep_answer: null
+  examples:
+    - use_case: "GET /orders/123 for a missing order"
+      why_it_fits: "Clients, monitors, and caches can react correctly to a 404 without parsing a custom body."
+      gotcha: "Use 5xx only for server faults; validation and not-found are client-side status classes."
   tags: [http, rest, api]
   is_active: true

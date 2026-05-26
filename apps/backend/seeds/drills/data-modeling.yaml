@@ -35,6 +35,10 @@
     still reference dead rows, and indexes grow with junk. Often an archive
     table — move to deleted_users — is cleaner than a flag.
   canonical_deep_answer: null
+  examples:
+    - use_case: "User account deletion with email reuse"
+      why_it_fits: "A deleted user may free the email for signup, but a plain unique index still blocks it."
+      gotcha: "Every active-user query and unique constraint must consistently filter deleted_at."
   tags: [schema, postgres]
   is_active: true
 
@@ -75,6 +79,10 @@
     Prefer either per-target tables (post_comments, photo_comments) or a
     real supertype table with concrete FK columns and a check constraint.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Comments on posts, photos, and videos"
+      why_it_fits: "A single target_id cannot have a real FK to three parent tables."
+      gotcha: "Deleting a parent can leave orphan comments unless the model uses enforceable FKs."
   tags: [schema, postgres, mysql]
   is_active: true
 
@@ -116,5 +124,9 @@
     JSONB column with GIN indexes; in MySQL prefer category-specific
     columns or generated columns.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Marketplace product filters"
+      why_it_fits: "Users filter on color, size, and brand, so EAV turns common queries into many joins."
+      gotcha: "Rarely queried custom metadata is acceptable; hot filters need typed/indexable storage."
   tags: [schema, eav, postgres]
   is_active: true

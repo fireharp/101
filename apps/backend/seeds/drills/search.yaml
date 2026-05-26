@@ -36,6 +36,10 @@
     matters. Use a bool query with must (text) + filter (price range).
     Misplacing filters into query scope kills both speed and relevance.
   canonical_deep_answer: null
+  examples:
+    - use_case: "E-commerce search for blue dresses under $50"
+      why_it_fits: "Text relevance should score blue dress while price is a cacheable structured filter."
+      gotcha: "Putting every field in match queries hurts both relevance and latency."
   tags: [elasticsearch, search, performance]
   is_active: true
 
@@ -77,5 +81,9 @@
     old to new. Drop the old index after a soak period. Never edit the
     mapping in place on a live index.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Product SKU changes from text to keyword"
+      why_it_fits: "The field type change requires a new index and alias cutover."
+      gotcha: "Dual-write or pause risky writes during reindex so new data is not lost."
   tags: [elasticsearch, search, migration]
   is_active: true

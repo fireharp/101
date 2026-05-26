@@ -37,6 +37,10 @@
     or DataLoader-style batching. Profile the real-world latency, don't trust
     "feels fast" on localhost.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Orders list with customer names"
+      why_it_fits: "One orders query plus one customer query per row creates 51 round trips for 50 orders."
+      gotcha: "A cache can hide symptoms, but the query shape is still wrong."
   tags: [orm, performance, latency]
   is_active: true
 
@@ -78,5 +82,9 @@
     the actual retainer (e.g. switch to an LRU cache with a bound). A
     nightly restart is a workaround, not a fix.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Node personalization service with an unbounded Map cache"
+      why_it_fits: "Snapshots show retained user objects growing with traffic and never being evicted."
+      gotcha: "RSS growth alone is not proof; compare heap snapshots and retainers."
   tags: [node, memory, performance]
   is_active: true

@@ -37,6 +37,10 @@
     rows affected, the caller retries. Optimistic scales better under low
     contention; pessimistic is simpler under high contention.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Two customers reserve the last event ticket at once."
+      why_it_fits: "A row lock or versioned conditional update creates exactly one winner."
+      gotcha: "An in-memory mutex fails once requests hit multiple app nodes."
   tags: [postgres, transactions, concurrency]
   is_active: true
 
@@ -79,5 +83,9 @@
     validate, design the job to be idempotent, and treat the lock as an
     optimization rather than a safety net.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Only one billing worker should run monthly invoice generation."
+      why_it_fits: "The lease reduces duplicate work while fencing protects downstream writes."
+      gotcha: "A GC pause can outlive the TTL and leave two workers active."
   tags: [redis, locks, distributed]
   is_active: true

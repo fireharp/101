@@ -22,6 +22,21 @@ export const config = {
   realtimeTranscriptionLanguage:
     process.env.OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE ?? "",
   gradingModel: process.env.OPENAI_GRADING_MODEL ?? "gpt-4.1-mini",
+  get openRouterApiKey(): string {
+    return process.env.OPENROUTER_API_KEY ?? "";
+  },
+  get openRouterBaseUrl(): string {
+    return process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
+  },
+  get openRouterModelTtlMs(): number {
+    return Number(process.env.OPENROUTER_MODEL_TTL_MS ?? 10 * 60 * 1000);
+  },
+  get openRouterCooldownMs(): number {
+    return Number(process.env.OPENROUTER_COOLDOWN_MS ?? 10 * 60 * 1000);
+  },
+  get openRouterTimeoutMs(): number {
+    return Number(process.env.OPENROUTER_TIMEOUT_MS ?? 20_000);
+  },
   realtimeVoice: process.env.REALTIME_VOICE ?? "marin",
   realtimeVoiceSpeed: Number(process.env.OPENAI_REALTIME_VOICE_SPEED ?? 1.25),
   // Optional: reference an OpenAI server-side prompt (Prompt Library) instead

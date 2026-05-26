@@ -140,10 +140,20 @@ const TOKEN_ALIASES: Record<string, string> = {
   monitoring: "telemetry",
   observability: "telemetry",
   observe: "telemetry",
+  orm: "orm",
+  orms: "orm",
+  instrument: "instrumentation",
+  instrumentation: "instrumentation",
+  instrumented: "instrumentation",
+  visibility: "instrumentation",
   parameter: "parameterized",
   parameters: "parameterized",
   parameterize: "parameterized",
   parameterized: "parameterized",
+  reproducible: "reproduce",
+  reproduce: "reproduce",
+  reproduced: "reproduce",
+  reproducing: "reproduce",
   remove: "removed",
   removed: "removed",
   removing: "removed",
@@ -162,7 +172,7 @@ const TOKEN_ALIASES: Record<string, string> = {
   versioning: "version",
 };
 
-const SHORT_KEYWORDS = new Set(["new", "old", "v1", "v2"]);
+const SHORT_KEYWORDS = new Set(["new", "old", "orm", "sql", "v1", "v2"]);
 
 function canonicalToken(word: string): string {
   const direct = TOKEN_ALIASES[word];
@@ -195,6 +205,12 @@ function tokenSet(text: string): Set<string> {
   if (/\bkeep(ing)?\s+(the\s+)?old\b/.test(normalized)) {
     set.add("emit");
     set.add("old");
+  }
+  if (/\bkeepalive\b|\bkeep\s+alive\b/.test(normalized)) {
+    // The rubric tokenizes "keep-alive" as "keep alive"; canonical "keep"
+    // maps to "emit" for API-versioning drills, so add both pieces here.
+    set.add("emit");
+    set.add("alive");
   }
   if (/\b0\s+01\b|\busage\b|\bmonitor/.test(normalized)) {
     set.add("usage");
@@ -267,10 +283,9 @@ function rapidSpeedScore(durationSeconds: number): number {
 
 function exampleCoverage(transcript: string): number {
   const t = normalize(transcript);
-  if (/\b(for example|for instance|such as|like|when|if)\b/.test(t)) {
+  if (/\b(for example|for instance|such as|e g)\b/.test(t)) {
     return 1;
   }
-  if (/\be g\b/.test(t)) return 1;
   return 0;
 }
 
@@ -328,14 +343,16 @@ function rapidOfflineGrade(input: GradeInput): GradingResult {
     subtopic: drill.subtopic,
     front: `For "${drill.question_text.split("\n")[0]}", add the rapid-answer piece: ${point}.`,
     back: drill.canonical_short_answer,
+    examples: drill.examples,
   }));
 
   return {
     score: round3(score),
     verdict: verdictFromScore(score),
-    covered_points: [...must.hit, ...nice.hit].slice(0, 4),
+    covered_points: uniqueStrings([...must.hit, ...nice.hit]).slice(0, 4),
     missed_points: missed,
     ideal_short_answer: drill.canonical_short_answer,
+    examples: drill.examples,
     follow_up_drills: [],
     cards,
     breakdown: {
@@ -391,14 +408,16 @@ function offlineGrade(input: GradeInput): GradingResult {
     subtopic: drill.subtopic,
     front: `For "${drill.question_text.split("\n")[0]}", what should you say about: ${point}?`,
     back: drill.canonical_short_answer,
+    examples: drill.examples,
   }));
 
   return {
     score: round3(score),
     verdict: verdictFromScore(score),
-    covered_points: [...must.hit, ...nice.hit].slice(0, 4),
+    covered_points: uniqueStrings([...must.hit, ...nice.hit]).slice(0, 4),
     missed_points: must.miss,
     ideal_short_answer: drill.canonical_short_answer,
+    examples: drill.examples,
     follow_up_drills: [],
     cards,
     breakdown: {
@@ -432,6 +451,7 @@ Return JSON only. Score raw_score_0_to_5 honestly; missing caveat should usually
       question: drill.question_text,
       rubric: drill.rubric,
       canonical_short_answer: drill.canonical_short_answer,
+      examples: drill.examples,
     },
     transcript,
     duration_seconds,
@@ -440,8 +460,9 @@ Return JSON only. Score raw_score_0_to_5 honestly; missing caveat should usually
       verdict: "pass|borderline|fail",
       missed_points: "string[]",
       ideal_short_answer: "string, <=4 sentences",
+      examples: '[ { "use_case": string, "why_it_fits": string, "gotcha": string } ]',
       follow_up_drills: "string[]",
-      cards: '[ { "front": string, "back": string } ]',
+      cards: '[ { "front": string, "back": string, "examples"?: examples[] } ]',
       breakdown: {
         must_have_coverage: "0..1 definition/consequence coverage",
         answer_clarity: "0..1 concise delivery clarity",
@@ -470,11 +491,16 @@ Return JSON only. Score raw_score_0_to_5 honestly; missing caveat should usually
 
   const rawFive = Math.max(0, Math.min(5, Number(parsed.raw_score_0_to_5 ?? 0)));
   const score = round3(rawFive / 5);
+  const examples =
+    parsed.examples && parsed.examples.length > 0
+      ? parsed.examples
+      : drill.examples;
   const cards = (parsed.cards ?? []).map((c) => ({
     ...c,
     drill_id: drill.id,
     topic: drill.topic,
     subtopic: drill.subtopic,
+    examples: c.examples && c.examples.length > 0 ? c.examples : examples,
   }));
 
   return {
@@ -483,6 +509,7 @@ Return JSON only. Score raw_score_0_to_5 honestly; missing caveat should usually
     missed_points: parsed.missed_points ?? [],
     ideal_short_answer:
       parsed.ideal_short_answer ?? drill.canonical_short_answer,
+    examples,
     follow_up_drills: parsed.follow_up_drills ?? [],
     cards,
     usage: usageFromChatCompletion(resp.usage, resp.id, resp.model),
@@ -525,6 +552,7 @@ Be honest, not generous. Reward concise default answers; penalize rambling.`;
       question: drill.question_text,
       rubric: drill.rubric,
       canonical_short_answer: drill.canonical_short_answer,
+      examples: drill.examples,
     },
     transcript,
     duration_seconds,
@@ -535,8 +563,9 @@ Be honest, not generous. Reward concise default answers; penalize rambling.`;
       verdict: "pass|borderline|fail",
       missed_points: "string[] of rubric items the user did not cover or got wrong",
       ideal_short_answer: "string, <=4 sentences",
+      examples: '[ { "use_case": string, "why_it_fits": string, "gotcha": string } ]',
       follow_up_drills: "string[] of short slugs for related concepts",
-      cards: '[ { "front": string, "back": string } ]',
+      cards: '[ { "front": string, "back": string, "examples"?: examples[] } ]',
       breakdown: {
         must_have_coverage: "0..1",
         answer_clarity: "0..1",
@@ -562,11 +591,16 @@ Be honest, not generous. Reward concise default answers; penalize rambling.`;
   const parsed = JSON.parse(content) as Partial<GradingResult>;
 
   const score = clamp01(Number(parsed.score ?? 0));
+  const examples =
+    parsed.examples && parsed.examples.length > 0
+      ? parsed.examples
+      : drill.examples;
   const cards = (parsed.cards ?? []).map((c) => ({
     ...c,
     drill_id: drill.id,
     topic: drill.topic,
     subtopic: drill.subtopic,
+    examples: c.examples && c.examples.length > 0 ? c.examples : examples,
   }));
 
   return {
@@ -575,6 +609,7 @@ Be honest, not generous. Reward concise default answers; penalize rambling.`;
     missed_points: parsed.missed_points ?? [],
     ideal_short_answer:
       parsed.ideal_short_answer ?? drill.canonical_short_answer,
+    examples,
     follow_up_drills: parsed.follow_up_drills ?? [],
     cards,
     usage: usageFromChatCompletion(resp.usage, resp.id, resp.model),
@@ -646,4 +681,8 @@ function clamp01(n: number): number {
 
 function round3(n: number): number {
   return Math.round(n * 1000) / 1000;
+}
+
+function uniqueStrings(items: string[]): string[] {
+  return [...new Set(items)];
 }

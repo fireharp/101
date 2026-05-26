@@ -4,12 +4,14 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import YAML from "yaml";
 import { importDrillsFromYaml } from "../db/seed.js";
+import { practicalExampleSchema } from "../drill-seed-schema.js";
 import {
   ADMIN_AUDIT_SESSION_ID,
   attempts,
   cards,
   drills,
   events,
+  gradingEvaluations,
   sessions,
   skillState,
   usageEvents,
@@ -18,6 +20,7 @@ import {
 } from "../db/repo.js";
 import { selectNextDrill } from "../engines/rotation.js";
 import { gradeAttempt } from "../engines/grading.js";
+import { evaluateAttemptWithOpenRouter } from "../engines/shadow-grading.js";
 import {
   DRILL_COACH_INSTRUCTIONS,
   RealtimeClientSecretError,
@@ -25,6 +28,7 @@ import {
   type RealtimeTurnDetection,
 } from "../services/realtime.js";
 import { hasOpenAI } from "../services/llm.js";
+import { hasOpenRouter } from "../services/openrouter.js";
 import {
   ElevenLabsError,
   elevenLabsConfigured,
@@ -32,7 +36,14 @@ import {
   mintConversationToken,
 } from "../services/elevenlabs.js";
 import { config } from "../config.js";
-import type { DrillAttempt, DrillItem, Mode, TokenUsage } from "../types.js";
+import type {
+  DrillAttempt,
+  DrillItem,
+  GeneratedCard,
+  Mode,
+  PracticalExample,
+  TokenUsage,
+} from "../types.js";
 
 const DEFAULT_USER_ID = "demo-user";
 
@@ -43,6 +54,7 @@ const modeSchema = z.enum([
   "weak_topics",
   "mock_interview",
   "rapid_fundamentals",
+  "betterstack_peterheinz",
 ]);
 
 function userIdFromRequest(req: Request): string {
@@ -60,6 +72,7 @@ apiRouter.get("/health", (_req: Request, res: Response) => {
     ok: true,
     drills: drills.count(),
     openai_configured: hasOpenAI(),
+    openrouter_configured: hasOpenRouter(),
     elevenlabs_configured: elevenLabsConfigured(),
     elevenlabs_api_key_present: hasElevenLabs(),
     voice_provider: config.voiceProvider,
@@ -272,7 +285,7 @@ apiRouter.post(
       user_id: userId,
       session_id: session.id,
       mode,
-      exclude_recent_count: parsed.data.exclude_recent_count ?? 10,
+      exclude_recent_count: parsed.data.exclude_recent_count ?? 30,
     });
     if (!drill) return res.status(404).json({ error: "no drills available" });
 
@@ -303,6 +316,7 @@ apiRouter.post(
         difficulty: drill.difficulty,
         expected_answer_shape: drill.rubric.must_have,
         rubric: drill.rubric,
+        examples: drill.examples,
         prior_attempts: prior,
       },
     });
@@ -360,6 +374,7 @@ apiRouter.post("/drill-sessions/:id/retry", (req: Request, res: Response) => {
       difficulty: drill.difficulty,
       expected_answer_shape: drill.rubric.must_have,
       rubric: drill.rubric,
+      examples: drill.examples,
       prior_attempts: prior,
     },
   });
@@ -382,6 +397,7 @@ apiRouter.get("/drill-attempts/:id", (req: Request, res: Response) => {
   const drill = drills.get(attempt.drill_id);
   res.json({
     attempt,
+    evaluations: gradingEvaluations.listForAttempt(attempt.id),
     drill: drill
       ? {
           id: drill.id,
@@ -391,10 +407,87 @@ apiRouter.get("/drill-attempts/:id", (req: Request, res: Response) => {
           question_text: drill.question_text,
           canonical_short_answer: drill.canonical_short_answer,
           rubric: drill.rubric,
+          examples: drill.examples,
         }
       : null,
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* GET /api/drill-attempts/:id/evaluations                            */
+/* Lists shadow grader evaluations for a persisted attempt.            */
+/* ------------------------------------------------------------------ */
+apiRouter.get(
+  "/drill-attempts/:id/evaluations",
+  (req: Request, res: Response) => {
+    const userId = userIdFromRequest(req);
+    const attemptId = String(req.params.id ?? "");
+    if (!attemptId) return res.status(400).json({ error: "missing id" });
+    const attempt = attempts.get(attemptId);
+    if (!attempt) return res.status(404).json({ error: "attempt not found" });
+    if (attempt.user_id !== userId) {
+      return res.status(403).json({ error: "attempt not owned by user" });
+    }
+    res.json({ evaluations: gradingEvaluations.listForAttempt(attempt.id) });
+  },
+);
+
+/* ------------------------------------------------------------------ */
+/* POST /api/drill-attempts/:id/evaluate                              */
+/* Runs OpenRouter shadow grading without mutating live grade state.   */
+/* ------------------------------------------------------------------ */
+const evaluateAttemptSchema = z.object({
+  models_policy: z.enum(["free-pinned", "free-router"]).optional().default("free-pinned"),
+  force: z.boolean().optional().default(false),
+});
+
+apiRouter.post(
+  "/drill-attempts/:id/evaluate",
+  async (req: Request, res: Response) => {
+    const userId = userIdFromRequest(req);
+    const attemptId = String(req.params.id ?? "");
+    if (!attemptId) return res.status(400).json({ error: "missing id" });
+    const parsed = evaluateAttemptSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.message });
+    }
+    if (!hasOpenRouter()) {
+      return res.status(503).json({
+        error: "OPENROUTER_API_KEY not configured on backend",
+      });
+    }
+    const attempt = attempts.get(attemptId);
+    if (!attempt) return res.status(404).json({ error: "attempt not found" });
+    if (attempt.user_id !== userId) {
+      return res.status(403).json({ error: "attempt not owned by user" });
+    }
+    if (!attempt.transcript) {
+      return res
+        .status(400)
+        .json({ error: "transcript missing — submit it before evaluation" });
+    }
+    const drill = drills.get(attempt.drill_id);
+    if (!drill) return res.status(404).json({ error: "drill not found" });
+    try {
+      const result = await evaluateAttemptWithOpenRouter({
+        attempt,
+        drill,
+        modelsPolicy: parsed.data.models_policy,
+        force: parsed.data.force,
+      });
+      if (result.models.length === 0) {
+        return res.status(503).json({
+          error:
+            "No zero-cost OpenRouter text models are currently available for this policy",
+          evaluations: result.evaluations,
+        });
+      }
+      res.json(result);
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
+    }
+  },
+);
 
 /* ------------------------------------------------------------------ */
 /* POST /api/drill-attempts/:id/transcript                            */
@@ -505,6 +598,7 @@ apiRouter.post(
       covered_points: grade.covered_points ?? [],
       missed_points: grade.missed_points,
       ideal_short_answer: grade.ideal_short_answer,
+      examples: grade.examples ?? drill.examples,
       cards: persistedCards,
       breakdown: grade.breakdown,
     });
@@ -760,6 +854,21 @@ const cardReviewSchema = z.object({
   quality: z.union([z.literal(0), z.literal(1)]),
 });
 
+function normalizeExamples(value: unknown): PracticalExample[] {
+  const parsed = z.array(practicalExampleSchema).safeParse(value ?? []);
+  return parsed.success ? parsed.data : [];
+}
+
+function cardBackWithExamples(card: GeneratedCard): string {
+  const examples = card.examples ?? [];
+  if (examples.length === 0) return card.back;
+  const lines = examples.map(
+    (e) =>
+      `- ${e.use_case}: ${e.why_it_fits} Gotcha: ${e.gotcha}`,
+  );
+  return `${card.back}\n\nExamples:\n${lines.join("\n")}`;
+}
+
 /* ------------------------------------------------------------------ */
 /* GET /api/cards/export.csv                                          */
 /* Anki-importable CSV. Columns: front, back, tags.                   */
@@ -773,7 +882,7 @@ apiRouter.get("/cards/export.csv", (req: Request, res: Response) => {
   for (const c of all) {
     const tags = [c.topic, c.subtopic].filter(Boolean).join(" ");
     lines.push(
-      [escape(c.front), escape(c.back), escape(tags)].join(","),
+      [escape(c.front), escape(cardBackWithExamples(c)), escape(tags)].join(","),
     );
   }
   res.setHeader("content-type", "text/csv; charset=utf-8");
@@ -905,6 +1014,7 @@ apiRouter.get("/drills/export.yaml", (req: Request, res: Response) => {
     rubric: d.rubric,
     canonical_short_answer: d.canonical_short_answer,
     canonical_deep_answer: d.canonical_deep_answer,
+    examples: d.examples,
     tags: d.tags,
     is_active: d.is_active,
   }));
@@ -996,6 +1106,7 @@ const drillPatchSchema = z.object({
   difficulty: z.number().int().min(1).max(5).optional(),
   trap_type: z.string().nullable().optional(),
   rubric: rubricPatchSchema.optional(),
+  examples: z.array(practicalExampleSchema).optional(),
   tags: z.array(z.string()).optional(),
 });
 
@@ -1104,8 +1215,13 @@ apiRouter.post(
       covered_points: grade.covered_points ?? [],
       missed_points: grade.missed_points,
       ideal_short_answer: grade.ideal_short_answer,
+      examples: grade.examples ?? drill.examples,
       breakdown: grade.breakdown,
-      cards: grade.cards.map((c) => ({ front: c.front, back: c.back })),
+      cards: grade.cards.map((c) => ({
+        front: c.front,
+        back: c.back,
+        examples: c.examples ?? grade.examples ?? drill.examples,
+      })),
     });
   },
 );
@@ -1154,7 +1270,7 @@ apiRouter.post("/realtime/tool-call", async (req: Request, res: Response) => {
           user_id: userId,
           session_id: session.id,
           mode,
-          exclude_recent_count: 10,
+          exclude_recent_count: 30,
         });
         if (!drill) {
           return res.json({
@@ -1175,6 +1291,7 @@ apiRouter.post("/realtime/tool-call", async (req: Request, res: Response) => {
             difficulty: drill.difficulty,
             question_text: drill.question_text.trim(),
             expected_answer_shape: drill.rubric.must_have,
+            examples: drill.examples,
             // Strip rubric details so the model still has to grade against
             // the user's answer — it should not auto-leak the cheat sheet
             // before the user attempts. The host app receives full rubric
@@ -1243,7 +1360,12 @@ apiRouter.post("/realtime/tool-call", async (req: Request, res: Response) => {
             covered_points: grade.covered_points ?? [],
             missed_points: grade.missed_points,
             ideal_short_answer: grade.ideal_short_answer,
-            cards: persistedCards.map((c) => ({ front: c.front, back: c.back })),
+            examples: grade.examples ?? drill.examples,
+            cards: persistedCards.map((c) => ({
+              front: c.front,
+              back: c.back,
+              examples: c.examples ?? grade.examples ?? drill.examples,
+            })),
           },
         });
       }
@@ -1254,7 +1376,14 @@ apiRouter.post("/realtime/tool-call", async (req: Request, res: Response) => {
           userId,
           cardsIn
             .filter(
-              (c): c is { front: string; back: string; drill_id?: string } =>
+              (c): c is {
+                front: string;
+                back: string;
+                drill_id?: string;
+                topic?: string;
+                subtopic?: string;
+                examples?: unknown;
+              } =>
                 typeof c === "object" &&
                 c !== null &&
                 typeof (c as { front?: unknown }).front === "string" &&
@@ -1264,6 +1393,9 @@ apiRouter.post("/realtime/tool-call", async (req: Request, res: Response) => {
               front: c.front,
               back: c.back,
               drill_id: c.drill_id,
+              topic: c.topic,
+              subtopic: c.subtopic,
+              examples: normalizeExamples(c.examples),
             })),
         );
         return res.json({ result: { saved: saved.length } });

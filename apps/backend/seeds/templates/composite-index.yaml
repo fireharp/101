@@ -24,6 +24,10 @@ rubric_template:
     - index every column
     - hash index for ordered query
     - "{ordered_col}-only index without caveat"
+examples:
+  - use_case: "{table_name} recent-list endpoint"
+    why_it_fits: "The query filters by {equality_col} and needs rows already ordered by {ordered_col}."
+    gotcha: "If another predicate is selective, test the full query with EXPLAIN ANALYZE before locking column order."
 tags: [postgres, mysql, indexing]
 variants:
   - id: db_index_orders_recent_001

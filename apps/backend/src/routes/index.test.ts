@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { AddressInfo } from "node:net";
+import { createServer } from "node:http";
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -18,12 +19,28 @@ process.env.PORT = "0"; // unused — we listen on ephemeral
 // configuration paths.
 process.env.ELEVENLABS_API_KEY = "";
 process.env.ELEVENLABS_AGENT_ID = "";
+process.env.OPENROUTER_API_KEY = "";
+process.env.OPENROUTER_BASE_URL = "";
 
 const { runMigrations } = await import("../db/migrations.js");
 const { drills } = await import("../db/repo.js");
+const { db } = await import("../db/index.js");
 const { createApp } = await import("../server.js");
+const {
+  FREE_PINNED_OPENROUTER_MODELS,
+  resetOpenRouterCaches,
+} = await import("../services/openrouter.js");
 
 runMigrations();
+
+const fixtureExamples = [
+  {
+    use_case: "Product listing sorted by price",
+    why_it_fits:
+      "The query filters one category and then needs ordered prices for the first page.",
+    gotcha: "Column order matters; verify the planner uses the index.",
+  },
+];
 
 // Seed a couple of fixture drills so rotation has something to chew on.
 const fixtures: Parameters<typeof drills.upsert>[0][] = [
@@ -46,6 +63,7 @@ const fixtures: Parameters<typeof drills.upsert>[0][] = [
     },
     canonical_short_answer: "Composite B-tree on (category_id, price).",
     canonical_deep_answer: null,
+    examples: fixtureExamples,
     tags: ["test"],
     is_active: true,
   },
@@ -121,6 +139,14 @@ const fixtures: Parameters<typeof drills.upsert>[0][] = [
     canonical_short_answer:
       "SQL injection is user input changing query structure; parameters keep input as values.",
     canonical_deep_answer: null,
+    examples: [
+      {
+        use_case: "Email lookup in a login form",
+        why_it_fits:
+          "The user controls the email value, so string interpolation can change the SQL predicate.",
+        gotcha: "Sanitizing strings is not the default; bind the value.",
+      },
+    ],
     tags: ["test", "rapid_fundamentals", "betterstack"],
     is_active: true,
   },
@@ -156,6 +182,66 @@ async function http<T = unknown>(
     (json as unknown as { _text: string })._text = await res.text();
   }
   return { status: res.status, json };
+}
+
+async function startFakeOpenRouter(): Promise<{
+  base: string;
+  close: () => Promise<void>;
+}> {
+  const fake = createServer((req, res) => {
+    res.setHeader("content-type", "application/json");
+    if (req.url?.startsWith("/api/v1/models")) {
+      res.end(
+        JSON.stringify({
+          data: [
+            {
+              id: FREE_PINNED_OPENROUTER_MODELS[0],
+              architecture: { output_modalities: ["text"] },
+              pricing: {
+                prompt: "0",
+                completion: "0",
+                request: "0",
+                internal_reasoning: "0",
+              },
+              supported_parameters: ["response_format"],
+            },
+          ],
+        }),
+      );
+      return;
+    }
+    if (req.url === "/api/v1/chat/completions") {
+      res.end(
+        JSON.stringify({
+          model: FREE_PINNED_OPENROUTER_MODELS[0],
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  score: 0.8,
+                  verdict: "pass",
+                  covered_points: ["composite B-tree"],
+                  missed_points: [],
+                  ideal_short_answer: "Use a composite B-tree.",
+                }),
+              },
+            },
+          ],
+          usage: { prompt_tokens: 8, completion_tokens: 8, total_tokens: 16 },
+        }),
+      );
+      return;
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ error: "not found" }));
+  });
+  fake.listen(0);
+  await new Promise<void>((resolve) => fake.once("listening", resolve));
+  const addr = fake.address() as AddressInfo;
+  return {
+    base: `http://127.0.0.1:${addr.port}`,
+    close: () => new Promise((resolve) => fake.close(() => resolve())),
+  };
 }
 
 test.after(() => {
@@ -227,15 +313,23 @@ test("rapid_fundamentals route round-trip returns tagged rapid drill and grades 
   assert.equal(sess.json.session.mode, "rapid_fundamentals");
 
   const next = await http<{
-    drill: { drill_id: string; attempt_id: string; topic: string };
+    drill: {
+      drill_id: string;
+      attempt_id: string;
+      topic: string;
+      examples: typeof fixtureExamples;
+    };
   }>("POST", `/api/drill-sessions/${sess.json.session.id}/next`, {});
   assert.equal(next.status, 200);
   assert.equal(next.json.drill.drill_id, "fx_rapid_001");
+  assert.equal(next.json.drill.examples[0]?.use_case, "Email lookup in a login form");
 
   const grade = await http<{
     score: number;
     verdict: "pass" | "borderline" | "fail";
     breakdown: { tradeoff_coverage: number };
+    examples: typeof fixtureExamples;
+    cards: { front: string; back: string; examples?: typeof fixtureExamples }[];
   }>(
     "POST",
     `/api/drill-attempts/${next.json.drill.attempt_id}/grade`,
@@ -249,6 +343,92 @@ test("rapid_fundamentals route round-trip returns tagged rapid drill and grades 
   assert.equal(grade.json.verdict, "pass");
   assert.ok(grade.json.score >= 0.8);
   assert.equal(grade.json.breakdown.tradeoff_coverage, 1);
+  assert.equal(grade.json.examples[0]?.use_case, "Email lookup in a login form");
+});
+
+test("attempt evaluation returns 503 when OpenRouter is not configured", async () => {
+  process.env.OPENROUTER_API_KEY = "";
+  resetOpenRouterCaches();
+  const sess = await http<{ session: { id: string } }>(
+    "POST",
+    "/api/drill-sessions",
+    { mode: "mixed" },
+  );
+  const next = await http<{ drill: { attempt_id: string } }>(
+    "POST",
+    `/api/drill-sessions/${sess.json.session.id}/next`,
+    {},
+  );
+  await http("POST", `/api/drill-attempts/${next.json.drill.attempt_id}/grade`, {
+    transcript: "Composite B-tree on category_id before price.",
+    duration_seconds: 20,
+  });
+
+  const evalRes = await http<{ error: string }>(
+    "POST",
+    `/api/drill-attempts/${next.json.drill.attempt_id}/evaluate`,
+    {},
+  );
+  assert.equal(evalRes.status, 503);
+  assert.match(evalRes.json.error, /OPENROUTER_API_KEY/);
+});
+
+test("attempt evaluation stores OpenRouter shadow rows without changing live grade", async () => {
+  const fake = await startFakeOpenRouter();
+  process.env.OPENROUTER_API_KEY = "route-openrouter-key";
+  process.env.OPENROUTER_BASE_URL = `${fake.base}/api/v1`;
+  resetOpenRouterCaches();
+  try {
+    const sess = await http<{ session: { id: string } }>(
+      "POST",
+      "/api/drill-sessions",
+      { mode: "mixed" },
+    );
+    const next = await http<{ drill: { attempt_id: string } }>(
+      "POST",
+      `/api/drill-sessions/${sess.json.session.id}/next`,
+      {},
+    );
+    const grade = await http<{ score: number }>(
+      "POST",
+      `/api/drill-attempts/${next.json.drill.attempt_id}/grade`,
+      {
+        transcript: "Composite B-tree on category_id before price.",
+        duration_seconds: 20,
+      },
+    );
+    const evalRes = await http<{
+      evaluations: { score: number | null; model: string; error: string | null }[];
+    }>(
+      "POST",
+      `/api/drill-attempts/${next.json.drill.attempt_id}/evaluate`,
+      {},
+    );
+    assert.equal(evalRes.status, 200);
+    assert.equal(evalRes.json.evaluations.length, 1);
+    assert.equal(evalRes.json.evaluations[0]?.model, FREE_PINNED_OPENROUTER_MODELS[0]);
+    assert.equal(evalRes.json.evaluations[0]?.score, 0.8);
+
+    const listed = await http<{
+      evaluations: { model: string; score: number | null }[];
+    }>(
+      "GET",
+      `/api/drill-attempts/${next.json.drill.attempt_id}/evaluations`,
+    );
+    assert.equal(listed.status, 200);
+    assert.equal(listed.json.evaluations.length, 1);
+
+    const detail = await http<{ attempt: { score: number | null } }>(
+      "GET",
+      `/api/drill-attempts/${next.json.drill.attempt_id}`,
+    );
+    assert.equal(detail.json.attempt.score, grade.json.score);
+  } finally {
+    await fake.close();
+    process.env.OPENROUTER_API_KEY = "";
+    process.env.OPENROUTER_BASE_URL = "";
+    resetOpenRouterCaches();
+  }
 });
 
 test("session ownership is enforced", async () => {
@@ -330,12 +510,14 @@ test("test-grade dry-runs without persisting an attempt", async () => {
     score: number;
     verdict: string;
     breakdown: { must_have_coverage: number };
+    examples: typeof fixtureExamples;
   }>("POST", "/api/drills/fx_db_001/test-grade", {
     transcript: "composite B-tree on category_id before price",
     duration_seconds: 30,
   });
   assert.equal(r.status, 200);
   assert.ok(r.json.score > 0);
+  assert.deepEqual(r.json.examples, fixtureExamples);
   // Verify no attempt was persisted to drill_attempts for this user/drill.
   const sess = await http<{ session: { id: string } }>(
     "POST",
@@ -873,6 +1055,7 @@ test("GET /api/drills/export.yaml round-trips active drills (LOCAL.md §16 seed 
   const parsed = YAML.parse(text) as Array<{
     id: string;
     is_active: boolean;
+    examples?: typeof fixtureExamples;
     rubric: { must_have: string[]; nice_to_have: string[]; red_flags: string[] };
     canonical_short_answer: string;
   }>;
@@ -884,6 +1067,9 @@ test("GET /api/drills/export.yaml round-trips active drills (LOCAL.md §16 seed 
     // Export shouldn't smuggle drafts in by default.
     assert.equal(drill.is_active, true, `${drill.id} should be active in default export`);
   }
+  const exportedDbDrill = parsed.find((d) => d.id === "fx_db_001");
+  assert.ok(exportedDbDrill);
+  assert.deepEqual(exportedDbDrill.examples, fixtureExamples);
 
   // include_drafts=1 must include inactive drafts too.
   const withDrafts = await fetch(
@@ -1176,6 +1362,13 @@ test("PATCH /api/drills/:id updates rubric without changing is_active", async ()
         nice_to_have: ["covering index"],
         red_flags: ["index every column"],
       },
+      examples: [
+        {
+          use_case: "Updated catalog page",
+          why_it_fits: "The page needs the cheapest products in one category.",
+          gotcha: "Do not assume index order without checking EXPLAIN.",
+        },
+      ],
       difficulty: 4,
     }),
   });
@@ -1184,12 +1377,14 @@ test("PATCH /api/drills/:id updates rubric without changing is_active", async ()
     drill: {
       canonical_short_answer: string;
       rubric: { must_have: string[] };
+      examples: typeof fixtureExamples;
       difficulty: number;
       is_active: boolean;
     };
   };
   assert.match(patchJson.drill.canonical_short_answer, /Updated/);
   assert.equal(patchJson.drill.difficulty, 4);
+  assert.equal(patchJson.drill.examples[0]?.use_case, "Updated catalog page");
   assert.ok(patchJson.drill.rubric.must_have.includes("EXPLAIN ANALYZE"));
   assert.equal(
     patchJson.drill.is_active,
@@ -1434,14 +1629,16 @@ test("card lifecycle: grade generates cards → due → review → re-schedule",
   const sessJson = await fetch(`${base}/api/drill-sessions`, {
     method: "POST",
     headers: cardUserHeaders,
-    body: JSON.stringify({ mode: "mixed" }),
+    body: JSON.stringify({ mode: "rapid_fundamentals" }),
   });
   const sess = (await sessJson.json()) as { session: { id: string } };
   const nextJson = await fetch(
     `${base}/api/drill-sessions/${sess.session.id}/next`,
     { method: "POST", headers: cardUserHeaders, body: "{}" },
   );
-  const next = (await nextJson.json()) as { drill: { attempt_id: string } };
+  const next = (await nextJson.json()) as {
+    drill: { attempt_id: string; drill_id: string };
+  };
 
   // Submit a deliberately weak answer so the offline grader emits cards
   // from missed rubric points.
@@ -1457,9 +1654,10 @@ test("card lifecycle: grade generates cards → due → review → re-schedule",
     },
   );
   const grade = (await gradeJson.json()) as {
-    cards: { id?: string; front: string; back: string }[];
+    cards: { id?: string; front: string; back: string; examples?: typeof fixtureExamples }[];
   };
   assert.ok(grade.cards.length >= 1, "weak answer should generate ≥ 1 card");
+  assert.equal(grade.cards[0]!.examples?.[0]?.use_case, "Email lookup in a login form");
   const cardId = grade.cards[0]!.id;
   assert.ok(cardId, "card insert should return an id");
 
@@ -1480,6 +1678,42 @@ test("card lifecycle: grade generates cards → due → review → re-schedule",
   // counts are consistent.
   assert.ok(due.stats.due <= due.stats.total);
 
+  const retryJson = await fetch(
+    `${base}/api/drill-sessions/${sess.session.id}/retry`,
+    {
+      method: "POST",
+      headers: cardUserHeaders,
+      body: JSON.stringify({ drill_id: next.drill.drill_id }),
+    },
+  );
+  const retry = (await retryJson.json()) as { drill: { attempt_id: string } };
+  const gradeAgainJson = await fetch(
+    `${base}/api/drill-attempts/${retry.drill.attempt_id}/grade`,
+    {
+      method: "POST",
+      headers: cardUserHeaders,
+      body: JSON.stringify({
+        transcript: "i dunno",
+        duration_seconds: 5,
+      }),
+    },
+  );
+  const gradeAgain = (await gradeAgainJson.json()) as {
+    cards: { id?: string; front: string; back: string; examples?: typeof fixtureExamples }[];
+  };
+  assert.deepEqual(
+    gradeAgain.cards.map((c) => c.id),
+    grade.cards.map((c) => c.id),
+    "grading the same missed points should reuse existing cards",
+  );
+  const afterRetryDueRes = await fetch(`${base}/api/cards/due?limit=20`, {
+    headers: cardUserHeaders,
+  });
+  const afterRetryDue = (await afterRetryDueRes.json()) as {
+    stats: { total: number; due: number };
+  };
+  assert.equal(afterRetryDue.stats.total, due.stats.total);
+
   // POST review: "knew it" → ease grows, interval becomes a positive day count.
   const knew = await fetch(`${base}/api/cards/${cardId}/review`, {
     method: "POST",
@@ -1496,15 +1730,23 @@ test("card lifecycle: grade generates cards → due → review → re-schedule",
   assert.ok(knewJson.interval_days >= 1, "knew → interval ≥ 1 day");
   assert.ok(knewJson.ease >= 1.3, "ease within SM-2 bounds");
 
-  // POST review: "forgot" → ease shrinks, interval resets to 0.
+  // POST review: "forgot" → ease shrinks, interval resets to 0, due in ~2 hours.
   const forgot = await fetch(`${base}/api/cards/${cardId}/review`, {
     method: "POST",
     headers: cardUserHeaders,
     body: JSON.stringify({ quality: 0 }),
   });
   assert.equal(forgot.status, 200);
-  const forgotJson = (await forgot.json()) as { interval_days: number };
+  const forgotJson = (await forgot.json()) as {
+    interval_days: number;
+    next_due_at: string;
+  };
   assert.equal(forgotJson.interval_days, 0, "forgot → interval = 0");
+  const forgotDelayMs = Date.parse(forgotJson.next_due_at) - Date.now();
+  assert.ok(
+    forgotDelayMs > 90 * 60 * 1000 && forgotDelayMs < 150 * 60 * 1000,
+    `forgot should schedule about 2 hours out, got ${forgotJson.next_due_at}`,
+  );
 
   // Bad body → 400.
   const bad = await fetch(`${base}/api/cards/${cardId}/review`, {
@@ -1523,7 +1765,68 @@ test("card lifecycle: grade generates cards → due → review → re-schedule",
   assert.equal(ghost.status, 404);
 });
 
+test("card due/review treats existing duplicate front/back cards as one group", async () => {
+  const userId = `dup-card-tester-${Date.now()}`;
+  const headers = {
+    "content-type": "application/json",
+    "x-user-id": userId,
+  };
+  const front = "duplicate front";
+  const back = "duplicate back";
+  for (let i = 0; i < 2; i++) {
+    db.prepare(
+      `INSERT INTO generated_cards
+         (id, user_id, drill_id, front, back, topic, subtopic, next_due_at)
+       VALUES (?, ?, 'fx_db_001', ?, ?, 'database', 'indexes',
+               strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 hour'))`,
+    ).run(randomUUID(), userId, front, back);
+  }
+
+  const dueRes = await fetch(`${base}/api/cards/due?limit=20`, { headers });
+  assert.equal(dueRes.status, 200);
+  const due = (await dueRes.json()) as {
+    cards: { id: string; front: string; back: string }[];
+    stats: { total: number; due: number };
+  };
+  assert.equal(due.cards.length, 1);
+  assert.equal(due.stats.total, 1);
+  assert.equal(due.stats.due, 1);
+
+  const review = await fetch(`${base}/api/cards/${due.cards[0]!.id}/review`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ quality: 0 }),
+  });
+  assert.equal(review.status, 200);
+  const rows = db
+    .prepare(
+      `SELECT next_due_at, interval_days
+         FROM generated_cards
+        WHERE user_id = ? AND front = ? AND back = ?
+        ORDER BY id`,
+    )
+    .all(userId, front, back) as {
+    next_due_at: string;
+    interval_days: number;
+  }[];
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0]!.next_due_at, rows[1]!.next_due_at);
+  assert.equal(rows[0]!.interval_days, 0);
+});
+
 test("GET /api/cards/export.csv produces Anki-compatible CSV", async () => {
+  db.prepare(
+    `INSERT INTO generated_cards
+       (id, user_id, drill_id, front, back, topic, subtopic, examples, next_due_at)
+     VALUES (?, ?, 'fx_db_001', ?, ?, 'database', 'indexes', ?, NULL)`,
+  ).run(
+    randomUUID(),
+    headers["x-user-id"],
+    "Anki examples front",
+    "Anki examples back",
+    JSON.stringify(fixtureExamples),
+  );
+
   const exportRes = await fetch(`${base}/api/cards/export.csv`, { headers });
   assert.equal(exportRes.status, 200);
   assert.match(
@@ -1532,27 +1835,12 @@ test("GET /api/cards/export.csv produces Anki-compatible CSV", async () => {
     "expected text/csv content-type",
   );
   const body = await exportRes.text();
+  assert.match(body, /Anki examples front/);
+  assert.match(body, /Examples:/);
+  assert.match(body, /Product listing sorted by price/);
   const lines = body.split(/\r?\n/).filter(Boolean);
   assert.ok(lines.length >= 1, "expected at least a header row");
   assert.equal(lines[0], "front,back,tags", "header row should match Anki shape");
-  if (lines.length >= 2) {
-    // Each data row should have ≥ 2 commas (front,back,tags). Commas inside
-    // quoted fields don't count — split on a comma OUTSIDE quotes.
-    const sample = lines[1]!;
-    const commasOutsideQuotes = (() => {
-      let n = 0;
-      let inQuote = false;
-      for (const ch of sample) {
-        if (ch === '"') inQuote = !inQuote;
-        else if (ch === "," && !inQuote) n += 1;
-      }
-      return n;
-    })();
-    assert.ok(
-      commasOutsideQuotes >= 2,
-      `row 1 should have ≥ 2 unquoted commas; got ${commasOutsideQuotes}`,
-    );
-  }
 });
 
 test("realtime token endpoint returns 503 without OPENAI_API_KEY", async () => {

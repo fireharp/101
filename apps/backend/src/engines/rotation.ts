@@ -1,4 +1,5 @@
 import type { DrillItem, Mode, UserSkillState } from "../types.js";
+import type { DrillLastAttempt } from "../db/repo.js";
 import { attempts, drills, skillState } from "../db/repo.js";
 
 /**
@@ -10,6 +11,13 @@ import { attempts, drills, skillState } from "../db/repo.js";
  *
  * After scoring, weighted-random over the top-5 to avoid being predictable.
  */
+
+const HOUR_MS = 60 * 60 * 1000;
+const DRILL_REVIEW_INTERVAL_MS = {
+  fail: 2 * HOUR_MS,
+  borderline: 6 * HOUR_MS,
+  pass: 18 * HOUR_MS,
+} as const;
 
 interface ScoredDrill {
   drill: DrillItem;
@@ -25,15 +33,25 @@ export interface RotationOptions {
 }
 
 export function selectNextDrill(opts: RotationOptions): DrillItem | null {
-  const recentLimit = opts.exclude_recent_count ?? 10;
+  const recentLimit = opts.exclude_recent_count ?? 30;
   const recent = attempts.recentDrillIds(opts.user_id, 20);
+  const recentBlocked = new Set(
+    recentLimit > 0 ? attempts.recentDrillIds(opts.user_id, recentLimit) : [],
+  );
   const recentInSession = attempts
     .listForSession(opts.session_id)
     .map((a) => a.drill_id);
+  const recentSessionSet = new Set(recentInSession);
 
   const stateRows = skillState.getAll(opts.user_id);
   const stateIndex = new Map<string, UserSkillState>(
     stateRows.map((r) => [`${r.topic}:${r.subtopic}`, r]),
+  );
+  const latestGradedIndex = new Map<string, DrillLastAttempt>(
+    attempts.latestGradedAttemptByDrill(opts.user_id).map((a) => [a.drill_id, a]),
+  );
+  const latestSeenIndex = new Map<string, DrillLastAttempt>(
+    attempts.latestAttemptByDrill(opts.user_id).map((a) => [a.drill_id, a]),
   );
 
   const pool = drills.list({ mode: opts.mode, active: true });
@@ -64,7 +82,18 @@ export function selectNextDrill(opts: RotationOptions): DrillItem | null {
   }
 
   const now = Date.now();
-  const scored: ScoredDrill[] = filtered.map((drill) => {
+  const eligible = filtered.filter(
+    (drill) =>
+      !recentSessionSet.has(drill.id) &&
+      !recentBlocked.has(drill.id) &&
+      !isInDrillReviewCooldown(latestGradedIndex.get(drill.id), now),
+  );
+
+  if (eligible.length === 0) {
+    return leastRecentlySeen(filtered, latestSeenIndex);
+  }
+
+  const scored: ScoredDrill[] = eligible.map((drill) => {
     const key = `${drill.topic}:${drill.subtopic}`;
     const skill = stateIndex.get(key);
 
@@ -73,8 +102,8 @@ export function selectNextDrill(opts: RotationOptions): DrillItem | null {
       weakness: weaknessWeight(skill),
       novelty: noveltyWeight(drill, recent),
       difficulty: difficultyFit(drill, skill),
-      topicBalance: topicBalance(drill, recentInSession, filtered),
-      trapDiversity: trapDiversity(drill, recentInSession, filtered),
+      topicBalance: topicBalance(drill, recentInSession, eligible),
+      trapDiversity: trapDiversity(drill, recentInSession, eligible),
       recentRepeatPenalty: recentRepeatPenalty(drill, recent, recentLimit),
       exactRepeatPenalty: exactRepeatPenalty(drill, recentInSession),
     };
@@ -109,15 +138,42 @@ export function selectNextDrill(opts: RotationOptions): DrillItem | null {
     .slice(0, 5);
 
   if (top.length === 0) {
-    // Fallback: pick a random non-recent drill so the user is never stuck.
-    const fallback = filtered.filter(
-      (d) => !recentInSession.includes(d.id),
-    );
-    const pickFrom = fallback.length > 0 ? fallback : filtered;
-    return pickFrom[Math.floor(Math.random() * pickFrom.length)] ?? null;
+    return leastRecentlySeen(eligible, latestSeenIndex);
   }
 
   return weightedRandom(top).drill;
+}
+
+function isInDrillReviewCooldown(
+  latest: DrillLastAttempt | undefined,
+  now: number,
+): boolean {
+  if (!latest?.verdict) return false;
+  const interval = DRILL_REVIEW_INTERVAL_MS[latest.verdict];
+  if (interval === undefined) return false;
+  const seenAt = Date.parse(latest.created_at);
+  if (!Number.isFinite(seenAt)) return false;
+  return now - seenAt < interval;
+}
+
+function leastRecentlySeen(
+  pool: DrillItem[],
+  latestSeenIndex: Map<string, DrillLastAttempt>,
+): DrillItem | null {
+  return (
+    [...pool].sort((a, b) => {
+      const aSeen = lastSeenMs(latestSeenIndex.get(a.id));
+      const bSeen = lastSeenMs(latestSeenIndex.get(b.id));
+      if (aSeen !== bSeen) return aSeen - bSeen;
+      return a.id.localeCompare(b.id);
+    })[0] ?? null
+  );
+}
+
+function lastSeenMs(latest: DrillLastAttempt | undefined): number {
+  if (!latest) return Number.NEGATIVE_INFINITY;
+  const parsed = Date.parse(latest.created_at);
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
 }
 
 function dueWeight(skill: UserSkillState | undefined, now: number): number {

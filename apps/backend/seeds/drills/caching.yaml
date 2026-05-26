@@ -37,6 +37,10 @@
     probabilistic early refresh so the rebuild happens before everyone is
     waiting.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Flash-sale product page cache expires under peak traffic."
+      why_it_fits: "Single-flight rebuilds the product once while other requests wait or serve stale."
+      gotcha: "Lock TTLs must cover rebuild time without wedging the key after crashes."
   tags: [caching, redis, latency]
   is_active: true
 
@@ -57,6 +61,7 @@
     nice_to_have:
       - write coalescing in write-back
       - write-around for write-heavy / read-rare
+      - concrete examples like inventory metrics and audit logs
     red_flags:
       - one strategy is always right
       - write-back is free
@@ -68,6 +73,7 @@
     nice_to_have:
       - coalescing
       - failure modes
+      - concrete application examples
     red_flags:
       - claim write-back has no risk
       - confuse write-through with write-back
@@ -76,7 +82,60 @@
     slow. Write-back acks from cache, persists later — fast but can lose
     data on crash. Write-around skips the cache on write and fills on miss,
     good for write-heavy data rarely read again. Pick based on durability
-    requirements and the read/write ratio.
+    requirements, read-after-write expectations, and the read/write ratio.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Choosing cache writes for settings, counters, and bulk imports."
+      why_it_fits: "Settings need write-through, counters may tolerate write-back, imports fit write-around."
+      gotcha: "Write-back is unsafe for data that must survive a cache crash."
   tags: [caching, consistency]
+  is_active: true
+
+- id: cache_write_strategy_scenarios_003
+  topic: caching
+  subtopic: write_strategy
+  difficulty: 3
+  trap_type: theory_without_scenario
+  question_text: >
+    Pick cache write strategies for these cases: ecommerce inventory, metrics
+    counters, audit log ingestion, and a bulk product import. Explain where the
+    wrong choice hurts users or the system.
+  expected_answer:
+    must_have:
+      - write-through fits inventory or payment/order status where stale reads are dangerous
+      - write-back fits metrics logs or counters only when delayed durability is acceptable
+      - write-around fits audit logs bulk imports or cold writes to avoid cache pollution
+      - wrong strategy creates concrete harm like lost payments stale shipping address or evicted hot cache
+    nice_to_have:
+      - transaction/error-handling caveat for write-through
+      - flush/journaling caveat for write-back
+      - invalidate or update cache for read-after-write paths
+    red_flags:
+      - write-back for payments without durability controls
+      - cache every bulk import row immediately
+  rubric:
+    must_have:
+      - write-through correctness example
+      - write-back throughput example with risk
+      - write-around cold-write example
+      - concrete failure scenario
+    nice_to_have:
+      - read-after-write handling
+      - cache pollution
+    red_flags:
+      - no application mapping
+      - ignore crash-before-flush
+  canonical_short_answer: >
+    Use write-through for inventory, payment status, or user settings because
+    stale reads can oversell stock, misreport orders, or ship to the wrong
+    address. Use write-back for metrics, logs, or counters only when batching and
+    delayed durability are acceptable. Use write-around for audit events, cold
+    uploads, or bulk imports so rarely-read writes do not evict hot cache keys.
+    The decision is durability, read-after-write need, and cache-pollution risk.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Mapping inventory, metrics counters, audit logs, and product imports."
+      why_it_fits: "Each case stresses a different axis: correctness, throughput, durability, or pollution."
+      gotcha: "Caching every cold write can evict hot keys and hurt real traffic."
+  tags: [caching, consistency, redis, system_design]
   is_active: true

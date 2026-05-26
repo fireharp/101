@@ -1,0 +1,193 @@
+- id: db_vacuum_autovacuum_mvcc_001
+  topic: database
+  subtopic: vacuum
+  difficulty: 3
+  trap_type: dead_tuple_confusion
+  question_text: >
+    Explain VACUUM and autovacuum in PostgreSQL from the MVCC storage model.
+    What is a dead tuple and why does cleanup happen later?
+  expected_answer:
+    must_have:
+      - updates and deletes leave old row versions
+      - dead tuple is an old row version no active transaction still needs
+      - VACUUM marks space reusable and cleans related metadata/index entries
+      - autovacuum runs this maintenance automatically
+    nice_to_have:
+      - normal VACUUM usually does not return disk to the OS
+      - visibility map and free space map
+      - transaction ID freezing
+    red_flags:
+      - DELETE physically removes rows immediately
+      - autovacuum is optional on write-heavy PostgreSQL systems
+  rubric:
+    must_have:
+      - MVCC old row versions
+      - dead tuple definition
+      - reusable space not immediate removal
+      - autovacuum background maintenance
+    nice_to_have:
+      - visibility map/free space map
+      - freezing
+    red_flags:
+      - in-place overwrite model
+      - disable autovacuum casually
+  canonical_short_answer: >
+    PostgreSQL updates and deletes create old row versions so concurrent
+    transactions can keep seeing the snapshot they started with. Once no active
+    transaction can see an old version, it is a dead tuple. VACUUM finds those
+    tuples, marks their space reusable, cleans related maintenance metadata, and
+    may help indexes. Autovacuum is the background system that runs vacuum and
+    analyze work when tables cross change thresholds.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Session table updated on every request."
+      why_it_fits: "Frequent updates leave old row versions that autovacuum must recycle."
+      gotcha: "Normal VACUUM usually reuses space internally rather than shrinking files."
+  tags: [postgres, vacuum, autovacuum, mvcc, chatgpt_share]
+  is_active: true
+
+- id: db_vacuum_analyze_stats_002
+  topic: database
+  subtopic: planner_statistics
+  difficulty: 3
+  trap_type: vacuum_analyze_confusion
+  question_text: >
+    Differentiate VACUUM, ANALYZE, VACUUM ANALYZE, and autovacuum. Which part
+    cleans storage and which part helps the query planner?
+  expected_answer:
+    must_have:
+      - VACUUM cleans or marks reusable dead tuple space
+      - ANALYZE updates planner statistics
+      - VACUUM ANALYZE does both in sequence
+      - autovacuum can run vacuum and autoanalyze automatically
+    nice_to_have:
+      - stale stats can cause bad plans even after storage cleanup
+      - visibility map can help index-only scans
+    red_flags:
+      - VACUUM alone refreshes all planner stats
+      - ANALYZE removes dead tuples
+  rubric:
+    must_have:
+      - vacuum is storage hygiene
+      - analyze is stats hygiene
+      - vacuum analyze combines them
+      - autovacuum automation
+    nice_to_have:
+      - stale statistics
+      - index-only scan visibility map
+    red_flags:
+      - conflate cleanup and statistics
+      - planner magically knows new distribution
+  canonical_short_answer: >
+    VACUUM is storage hygiene: it reclaims or marks reusable space from dead row
+    versions. ANALYZE is planner hygiene: it samples tables and updates
+    statistics used for row-count and selectivity estimates. VACUUM ANALYZE
+    does both. Autovacuum is the background daemon that decides when tables need
+    vacuuming and autoanalyzing, though high-write or huge tables may need
+    tuning.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Bulk import changes a table from mostly free to mostly paid users."
+      why_it_fits: "ANALYZE refreshes selectivity estimates so the planner can pick sane joins."
+      gotcha: "VACUUM alone cleans storage but does not fully solve stale statistics."
+  tags: [postgres, vacuum, analyze, planner, chatgpt_share]
+  is_active: true
+
+- id: db_vacuum_bloat_gotchas_003
+  topic: database
+  subtopic: vacuum
+  difficulty: 4
+  trap_type: operational_overconfidence
+  question_text: >
+    A large PostgreSQL table had many updates and deletes. Autovacuum is
+    running, disk usage is still high, and queries are slower. What gotchas do
+    you check before saying "vacuum is broken"?
+  expected_answer:
+    must_have:
+      - normal VACUUM usually reuses internal space instead of shrinking files
+      - long-running transactions or idle in transaction sessions can block cleanup
+      - indexes can bloat and may need REINDEX or online repack
+      - VACUUM FULL rewrites and locks heavily
+    nice_to_have:
+      - stale statistics need ANALYZE
+      - replication slots can hold old horizons
+      - transaction ID wraparound makes vacuum mandatory
+    red_flags:
+      - run VACUUM FULL on a hot production table by default
+      - disable autovacuum globally
+  rubric:
+    must_have:
+      - normal vacuum reuse versus shrink distinction
+      - old snapshots block cleanup
+      - index bloat separate from table cleanup
+      - vacuum full lock/rewrite cost
+    nice_to_have:
+      - analyze stats
+      - replication slots
+      - wraparound
+    red_flags:
+      - treat vacuum full as harmless
+      - ignore active transactions
+  canonical_short_answer: >
+    First check whether the space is merely reusable inside the table, because
+    normal VACUUM usually does not return disk to the OS. Then check old
+    snapshots from long transactions, idle-in-transaction sessions, or
+    replication slots that can prevent cleanup. Also check stale stats and index
+    bloat; indexes may need REINDEX or repacking. VACUUM FULL can shrink by
+    rewriting the table, but it is a disruptive locking operation, not the
+    default answer for a hot table.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Soft-delete cleanup removes millions of rows from an orders table."
+      why_it_fits: "Dead tuples and index bloat can persist as reusable internal space."
+      gotcha: "VACUUM FULL may reclaim disk but blocks heavily on a hot table."
+  tags: [postgres, vacuum, bloat, transactions, chatgpt_share]
+  is_active: true
+
+- id: db_explain_index_prediction_004
+  topic: database
+  subtopic: explain
+  difficulty: 3
+  trap_type: prediction_vs_proof
+  question_text: >
+    Will plain EXPLAIN work with indexes in PostgreSQL? How do you decide
+    between EXPLAIN, EXPLAIN ANALYZE, and EXPLAIN (ANALYZE, BUFFERS)?
+  expected_answer:
+    must_have:
+      - EXPLAIN runs the planner and can show index scan choices
+      - plain EXPLAIN is estimated and does not execute the query
+      - EXPLAIN ANALYZE executes and shows actual timing and rows
+      - BUFFERS helps inspect page/cache I/O
+    nice_to_have:
+      - writes need transaction and rollback if analyzed
+      - compare estimated rows to actual rows
+      - stale stats or wrong selectivity can make estimates wrong
+    red_flags:
+      - EXPLAIN ignores indexes
+      - EXPLAIN ANALYZE is always safe for DELETE or UPDATE
+  rubric:
+    must_have:
+      - planner sees indexes
+      - prediction versus execution
+      - actual timing and row counts
+      - buffers for I/O evidence
+    nice_to_have:
+      - write safety
+      - estimate mismatch
+    red_flags:
+      - no difference between explain modes
+      - trust predictions as proof
+  canonical_short_answer: >
+    Plain EXPLAIN does consider indexes because it runs the optimizer and shows
+    the estimated plan: index scan, bitmap scan, sequential scan, joins, sorts,
+    and costs. It does not prove the index helps because it does not run the
+    query. Use EXPLAIN ANALYZE for real timing and actual row counts, and add
+    BUFFERS when you need I/O evidence. For writes, start with plain EXPLAIN or
+    run ANALYZE inside a transaction you roll back.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Testing whether a new customer_id index speeds a support search."
+      why_it_fits: "EXPLAIN predicts the access path; ANALYZE proves actual rows and timing."
+      gotcha: "EXPLAIN ANALYZE on UPDATE or DELETE executes the write unless rolled back."
+  tags: [postgres, explain, indexes, performance, chatgpt_share]
+  is_active: true

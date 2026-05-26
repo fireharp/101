@@ -323,6 +323,7 @@ export const DRILL_COACH_TOOLS = [
             "weak_topics",
             "mock_interview",
             "rapid_fundamentals",
+            "betterstack_peterheinz",
           ],
           description:
             "Optional. Filter the drill pool. Defaults to the session's mode.",
@@ -354,7 +355,7 @@ export const DRILL_COACH_TOOLS = [
     type: "function",
     name: "grade_attempt",
     description:
-      "Grade the user's answer against the drill rubric. Returns score, verdict, missed points, ideal short answer, and follow-up cards.",
+      "Grade the user's answer against the drill rubric. Returns score, verdict, missed points, ideal short answer, practical examples, and follow-up cards.",
     parameters: {
       type: "object",
       properties: {
@@ -385,6 +386,20 @@ export const DRILL_COACH_TOOLS = [
               front: { type: "string" },
               back: { type: "string" },
               drill_id: { type: "string" },
+              topic: { type: "string" },
+              subtopic: { type: "string" },
+              examples: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    use_case: { type: "string" },
+                    why_it_fits: { type: "string" },
+                    gotcha: { type: "string" },
+                  },
+                  required: ["use_case", "why_it_fits", "gotcha"],
+                },
+              },
             },
             required: ["front", "back"],
           },
@@ -418,12 +433,13 @@ full-stack fundamentals interviews.
 Rules:
 - Ask exactly one drill question at a time, taken from the get_next_drill tool. Do NOT invent questions.
 - Do not explain the answer before the user answers.
-- The user must answer in 30–90 seconds. For rapid_fundamentals drills, target
-  20–40 seconds: definition, consequence, caveat, tiny example.
+- The user must answer in 30–90 seconds. For rapid_fundamentals or
+  betterstack_peterheinz drills, target 20–40 seconds: definition,
+  consequence, caveat, tiny example.
 - If they ramble, interrupt politely with "Give me the default answer first."
 - Push for concise default answers, not rambling.
-- Do not turn rapid_fundamentals drills into system-design follow-ups unless
-  the question itself asks for a design.
+- Do not turn rapid-style drills into system-design follow-ups unless the
+  question itself asks for a design.
 - After the answer, call grade_attempt with the transcript and duration.
 - After grading, speak only one short verdict sentence. The host UI shows
   score, missed points, ideal answer, and cards. Do not read all of that aloud.

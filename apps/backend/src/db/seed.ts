@@ -66,6 +66,7 @@ export function importDrillsFromYaml(yamlText: string): ImportResult {
       rubric: result.data.rubric,
       canonical_short_answer: result.data.canonical_short_answer,
       canonical_deep_answer: result.data.canonical_deep_answer ?? null,
+      examples: result.data.examples ?? [],
       tags: result.data.tags ?? [],
       is_active: result.data.is_active ?? true,
     };
@@ -112,6 +113,7 @@ export function seedDrillsFromYaml(dir: string = config.seedsDir): {
         rubric: result.data.rubric,
         canonical_short_answer: result.data.canonical_short_answer,
         canonical_deep_answer: result.data.canonical_deep_answer ?? null,
+        examples: result.data.examples ?? [],
         tags: result.data.tags ?? [],
         is_active: result.data.is_active ?? true,
       };

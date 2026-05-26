@@ -37,6 +37,10 @@
     doesn't kill-and-restart the whole fleet. Graceful drain on deploy
     closes the loop.
   canonical_deep_answer: null
+  examples:
+    - use_case: "API process is alive but cannot reach its primary database."
+      why_it_fits: "Readiness can remove the node from traffic while liveness keeps it running."
+      gotcha: "Putting dependency checks in liveness can cause restart loops."
   tags: [load_balancing, k8s, reliability]
   is_active: true
 
@@ -79,6 +83,10 @@
     fresh endpoints within seconds, not minutes. Trade pull-DNS simplicity
     against push-update freshness.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Orders service calls payments during rolling deploys."
+      why_it_fits: "Dynamic discovery removes old payment endpoints and adds new healthy ones."
+      gotcha: "Long DNS TTLs or sticky client caches can preserve dead endpoints."
   tags: [service_discovery, k8s, mesh]
   is_active: true
 
@@ -121,5 +129,9 @@
     users early, and ramps up. For high-risk releases, canary first then
     full rollout. Use feature flags to decouple deploy from feature exposure.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Releasing a risky checkout change with fast rollback needs."
+      why_it_fits: "Canary exposes a small slice first; blue/green gives an instant traffic swap."
+      gotcha: "Database migrations must stay backward-compatible during either rollout."
   tags: [deploys, ci_cd, reliability]
   is_active: true

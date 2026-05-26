@@ -1,0 +1,197 @@
+- id: frontend_framework_runtime_models_001
+  topic: frontend
+  subtopic: component_frameworks
+  difficulty: 4
+  trap_type: treats_frameworks_as_identical
+  question_text: >
+    Compare React, Vue, Svelte, and Solid at the component-runtime level. What
+    actually happens when state changes, and why are they not all the same?
+  expected_answer:
+    must_have:
+      - React reruns component functions and reconciles a UI tree
+      - Vue tracks reactive reads and reruns an affected render effect
+      - Svelte compiles component state changes into targeted DOM update code
+      - Solid uses a fine-grained signal graph with targeted subscribers
+    nice_to_have:
+      - React Compiler reduces manual memoization but does not make React Solid
+      - VDOM versus no VDOM distinction
+      - component setup may run once in Solid
+    red_flags:
+      - all modern frameworks are basically identical
+      - Svelte and Solid both use React-style VDOM diffing
+  rubric:
+    must_have:
+      - React component rerender plus reconciliation
+      - Vue dependency tracking plus render effect
+      - Svelte compiler-generated updates
+      - Solid fine-grained signals
+    nice_to_have:
+      - compiler and memoization nuance
+      - VDOM distinction
+    red_flags:
+      - flatten all frameworks into VDOM
+      - ignore dependency tracking
+  canonical_short_answer: >
+    React is component-render-first: a state update schedules component
+    functions to run, then React reconciles and commits minimal DOM changes.
+    Vue tracks reactive reads through refs/proxies and reruns affected render
+    effects. Svelte uses a compiler to turn state changes into direct update
+    code. Solid builds a fine-grained signal graph so exact subscribers update,
+    often without rerunning the component setup function.
+  canonical_deep_answer: >
+    The convergence is in ergonomics: compilers, signals, and less manual
+    memoization. The mental models still differ. React asks you to keep render
+    pure so rerunning it is safe; Vue feels mutable but records dependencies;
+    Svelte relies on compile-time knowledge of state and template references;
+    Solid wires DOM bindings and computations to signals directly. That affects
+    how you reason about memoization, effects, derived state, and where a
+    performance problem is likely to live.
+  examples:
+    - use_case: "Editable dashboard with many small widgets"
+      why_it_fits: "React may rerun component trees; Solid and Vue can update narrower reactive subscribers."
+      gotcha: "Framework choice does not remove the need to measure real bottlenecks."
+  tags: [frontend, frameworks, react, vue, svelte, solid, chatgpt_share]
+  is_active: true
+
+- id: frontend_react_browser_pipeline_002
+  topic: frontend
+  subtopic: rendering
+  difficulty: 3
+  trap_type: react_render_vs_browser_render
+  question_text: >
+    A candidate says React "follows" the browser render pipeline and memoizing
+    components will avoid layout thrashing. What is the correction?
+  expected_answer:
+    must_have:
+      - React render means calling components to compute UI
+      - React commit mutates the DOM
+      - browser pipeline is style layout paint composite after DOM/CSS changes
+      - memoization does not directly prevent forced layout
+    nice_to_have:
+      - measure React rerenders with profiler
+      - batch DOM reads before writes for browser rendering
+      - transform and opacity often avoid layout
+    red_flags:
+      - React controls browser layout
+      - memoize everything as the first fix
+  rubric:
+    must_have:
+      - separate React render from browser rendering
+      - commit phase updates DOM
+      - browser owns style/layout/paint/composite
+      - memoization is not a layout-thrashing fix
+    nice_to_have:
+      - profiler and forced-layout examples
+      - transform opacity
+    red_flags:
+      - confuse framework rerenders with paint/layout passes
+      - premature memoization
+  canonical_short_answer: >
+    React render is React calling components to calculate the next UI; commit is
+    when React mutates the real DOM. After that, the browser performs style,
+    layout, paint, and composite as needed. Memoization can reduce React work,
+    but layout thrashing is a browser problem caused by forcing layout reads
+    between DOM writes. Fix that by batching reads and writes, not by blindly
+    memoizing components.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Table component measuring row heights after state changes"
+      why_it_fits: "React can commit DOM changes, but offsetHeight reads still trigger browser layout."
+      gotcha: "Memoizing rows may reduce React work while forced layout remains."
+  tags: [frontend, react, rendering, performance, chatgpt_share]
+  is_active: true
+
+- id: frontend_layout_thrashing_loop_003
+  topic: frontend
+  subtopic: rendering
+  difficulty: 3
+  trap_type: forced_sync_layout
+  question_text: >
+    In a loop, code sets el.style.width, reads el.offsetHeight, then sets
+    el.style.height. Why is this slow, and what shape should the fix take?
+  expected_answer:
+    must_have:
+      - style write invalidates layout
+      - offsetHeight or getBoundingClientRect can force synchronous layout
+      - repeated write-read-write causes repeated layout passes
+      - batch all reads before all writes
+    nice_to_have:
+      - requestAnimationFrame for visual writes
+      - prefer transform or opacity for animation
+      - scrollTop can also force layout in some cases
+    red_flags:
+      - color changes always cause reflow
+      - debounce is the complete fix
+  rubric:
+    must_have:
+      - identify forced synchronous layout
+      - name layout reads
+      - explain repeated passes
+      - batch reads then writes
+    nice_to_have:
+      - frame budget
+      - transform opacity
+    red_flags:
+      - only lower event frequency
+      - no concrete behavior
+  canonical_short_answer: >
+    The style write makes layout dirty, then offsetHeight asks the browser for
+    current geometry, so the browser must flush style/layout immediately. Doing
+    that in a loop creates many forced layout passes. Read all needed geometry
+    first, then perform writes together, ideally in a frame-friendly path; use
+    transform or opacity for animations when possible.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Resizable list items in a drag interaction"
+      why_it_fits: "Interleaving style writes and geometry reads forces repeated synchronous layout."
+      gotcha: "Debouncing events helps frequency but does not fix write-read ordering."
+  tags: [frontend, browser, layout, performance, chatgpt_share]
+  is_active: true
+
+- id: frontend_build_reactivity_core_004
+  topic: frontend
+  subtopic: reactivity
+  difficulty: 4
+  trap_type: implementation_handwave
+  question_text: >
+    Sketch the minimal core of a Vue-like reactive system in a few functions.
+    What are the essential pieces and what does real Vue add beyond that?
+  expected_answer:
+    must_have:
+      - active effect while running a function
+      - proxy get tracks target key to effect
+      - proxy set triggers effects for target key
+      - mount or render effect updates UI from reactive state
+    nice_to_have:
+      - scheduler and batching
+      - computed refs and watchers
+      - component instances template compiler and VDOM patching
+    red_flags:
+      - manually query and update every DOM node
+      - no dependency cleanup or batching caveat
+  rubric:
+    must_have:
+      - activeEffect model
+      - WeakMap target key dependency storage
+      - track on read
+      - trigger on write
+    nice_to_have:
+      - scheduler
+      - computed and cleanup caveats
+    red_flags:
+      - event bus only
+      - direct mutation with no subscriptions
+  canonical_short_answer: >
+    The seed is effect(fn), reactive(obj), and mount/render. effect records the
+    currently running function; reactive returns a Proxy whose get stores that
+    effect under target/key and whose set reruns or schedules subscribers.
+    Mount runs rendering inside an effect, so reading state subscribes the UI.
+    Real Vue adds refs, computed values, cleanup, batching, component instances,
+    lifecycle, template compilation, and VDOM patching.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Counter text bound to reactive state"
+      why_it_fits: "The render effect reads count, track records it, and set triggers that subscriber."
+      gotcha: "Real systems need cleanup and scheduling or effects can leak and rerun too often."
+  tags: [frontend, vue, reactivity, implementation, chatgpt_share]
+  is_active: true

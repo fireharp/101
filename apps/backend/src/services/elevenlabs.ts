@@ -186,7 +186,7 @@ export const ELEVENLABS_CLIENT_TOOLS = [
   {
     name: "grade_attempt",
     description:
-      "Grade the user's answer against the drill rubric. Returns score, verdict, missed points, ideal short answer, and follow-up cards.",
+      "Grade the user's answer against the drill rubric. Returns score, verdict, missed points, ideal short answer, practical examples, and follow-up cards.",
     parameters: {
       type: "object",
       properties: {
@@ -237,6 +237,28 @@ export const ELEVENLABS_CLIENT_TOOLS = [
               drill_id: {
                 type: "string",
                 description: "Optional related drill id.",
+              },
+              topic: {
+                type: "string",
+                description: "Optional topic tag.",
+              },
+              subtopic: {
+                type: "string",
+                description: "Optional subtopic tag.",
+              },
+              examples: {
+                type: "array",
+                description: "Optional practical examples to keep on the card.",
+                items: {
+                  type: "object",
+                  properties: {
+                    use_case: { type: "string" },
+                    why_it_fits: { type: "string" },
+                    gotcha: { type: "string" },
+                  },
+                  required: ["use_case", "why_it_fits", "gotcha"],
+                  description: "Concrete review context for the card.",
+                },
               },
             },
             required: ["front", "back"],

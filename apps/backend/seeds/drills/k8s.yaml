@@ -2,41 +2,96 @@
   topic: kubernetes
   subtopic: resources
   difficulty: 3
-  trap_type: missing_limits
+  trap_type: memory_leak_vs_limit
   question_text: >
-    A pod keeps getting OOMKilled in production. What questions do you ask
-    before changing anything?
+    A Go API pod has memory limit 512Mi and request 256Mi. It is OOMKilled
+    every few hours; metrics show RSS climbing steadily from 180Mi to 510Mi
+    after deploy, with no traffic spike. What do you check before changing
+    the limit?
   expected_answer:
     must_have:
-      - check actual memory usage trend
-      - is it the workload or the limit
-      - request vs limit gap
-      - check for memory leak vs spike
+      - steady memory growth suggests leak or retained data
+      - inspect memory metrics and recent deploy/change
+      - compare request and limit to actual usage
+      - take runtime or heap profile before raising limit
     nice_to_have:
-      - JVM heap inside container caveat
+      - check cache growth or goroutine leaks
       - VPA / right-sizing
     red_flags:
       - "just raise the limit until it stops"
       - "remove the limit"
   rubric:
     must_have:
-      - measure before changing
-      - request vs limit
-      - leak vs natural growth
+      - steady growth indicates leak or retained data
+      - inspect memory trend and deploy context
+      - profile before raising limit
     nice_to_have:
-      - JVM heap awareness
+      - request vs limit right-sizing
+      - cache or goroutine leak
       - VPA
     red_flags:
       - infinite limit raise
       - no limit at all
   canonical_short_answer: >
-    Don't just raise the limit. Pull the actual memory usage over time —
-    if it grows monotonically, it's a leak that more memory will only
-    delay. If it spikes, find the spike source. Check request vs limit
-    sizing. For JVM apps, verify the heap is tuned for the container's
-    cgroup limit. Raise limit only after you understand the cause.
+    The steady climb after deploy points to a leak or retained data, not a
+    normal traffic spike. Check memory over time, correlate it with the
+    deploy, compare request/limit to actual usage, and take a heap/profile
+    sample before changing the limit. Raising the limit may be a temporary
+    mitigation, but the fix is finding the retaining cache, object graph, or
+    goroutine leak.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Go API RSS climbs after deploy"
+      why_it_fits: "Monotonic growth without traffic change points to retained data or a leak."
+      gotcha: "Raising limits only delays the next OOM if the growth is unbounded."
   tags: [kubernetes, memory, oom]
+  is_active: true
+
+- id: k8s_memory_spike_worker_002
+  topic: kubernetes
+  subtopic: resources
+  difficulty: 3
+  trap_type: burst_memory
+  question_text: >
+    An image-resize worker pod is usually 220Mi RSS with a 512Mi limit, but
+    it gets OOMKilled only when processing several large uploads at once.
+    What do you change and what do you verify first?
+  expected_answer:
+    must_have:
+      - memory spike tied to workload concurrency
+      - limit concurrency or job size per pod
+      - measure peak memory per image/job
+      - right-size request and limit after measuring
+    nice_to_have:
+      - stream/chunk processing to reduce peak memory
+      - separate queue for large jobs
+    red_flags:
+      - assume leak from one spike
+      - raise limits without bounding concurrency
+  rubric:
+    must_have:
+      - workload spike not steady leak
+      - bound worker concurrency
+      - measure peak per job
+      - right-size resources
+    nice_to_have:
+      - stream processing
+      - large-job queue isolation
+    red_flags:
+      - unbounded parallelism
+      - remove memory limit
+  canonical_short_answer: >
+    This looks like peak memory from concurrent large jobs, not a slow leak.
+    Measure peak memory per resize job, cap worker concurrency so worst-case
+    memory stays below the limit, and then right-size requests/limits. If
+    possible, stream or chunk image processing and route very large jobs to a
+    separate queue or larger worker class.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Thumbnail worker handling five 50MB uploads at once"
+      why_it_fits: "Each job is safe alone, but concurrent decoding exceeds the pod memory limit."
+      gotcha: "More memory helps only after concurrency and per-job peak are bounded."
+  tags: [kubernetes, memory, oom, queues]
   is_active: true
 
 - id: k8s_probe_misuse_001
@@ -79,5 +134,9 @@
     worse. Move /health-style checks to readiness (LB drains the pod), keep
     liveness for "irrecoverable", and add a startupProbe for cold starts.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Node API takes 5s to answer health checks under load"
+      why_it_fits: "The pod is overloaded but alive, so readiness should stop traffic instead of liveness restarting it."
+      gotcha: "Too-aggressive liveness can create a restart loop during exactly the busiest window."
   tags: [kubernetes, probes, reliability]
   is_active: true

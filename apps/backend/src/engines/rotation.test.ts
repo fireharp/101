@@ -17,6 +17,7 @@ const { runMigrations } = await import("../db/migrations.js");
 const { drills, attempts, skillState, sessions, users } = await import(
   "../db/repo.js"
 );
+const { db } = await import("../db/index.js");
 const { selectNextDrill } = await import("./rotation.js");
 
 runMigrations();
@@ -48,6 +49,51 @@ function seedDrill(
     is_active: true,
   };
   drills.upsert(drill);
+}
+
+function withOnlyActiveDrills(ids: string[], fn: () => void): void {
+  const originalActive = drills
+    .list({ active: true })
+    .map((d) => ({ ...d }));
+  for (const d of originalActive) drills.upsert({ ...d, is_active: false });
+  for (const id of ids) seedDrill(id, "database", "intervals", 2, "rotation");
+  try {
+    fn();
+  } finally {
+    for (const id of ids) {
+      const d = drills.get(id);
+      if (d) drills.upsert({ ...d, is_active: false });
+    }
+    for (const d of originalActive) drills.upsert({ ...d, is_active: true });
+  }
+}
+
+function createGradedAttemptAt(opts: {
+  user_id: string;
+  session_id: string;
+  drill_id: string;
+  score: number;
+  verdict: "pass" | "borderline" | "fail";
+  ageHours: number;
+}): void {
+  const attempt = attempts.createPending({
+    user_id: opts.user_id,
+    session_id: opts.session_id,
+    drill_id: opts.drill_id,
+  });
+  attempts.updateGrade(attempt.id, {
+    score: opts.score,
+    verdict: opts.verdict,
+    missed_points: [],
+    ideal_answer: "ok",
+    created_cards: [],
+  });
+  const createdAt = new Date(Date.now() - opts.ageHours * 60 * 60 * 1000)
+    .toISOString();
+  db.prepare("UPDATE drill_attempts SET created_at = ? WHERE id = ?").run(
+    createdAt,
+    attempt.id,
+  );
 }
 
 seedDrill("db-a", "database", "indexes", 3, "equality_plus_order");
@@ -83,6 +129,28 @@ drills.upsert({
   canonical_short_answer: "EXPLAIN shows estimates; EXPLAIN ANALYZE runs the query.",
   canonical_deep_answer: null,
   tags: ["rapid_fundamentals", "betterstack", "database"],
+  is_active: true,
+});
+drills.upsert({
+  id: "peter-api",
+  topic: "api_design",
+  subtopic: "domain_actions",
+  difficulty: 3,
+  trap_type: "generic_crud",
+  question_text: "Petr operation endpoint fixture",
+  expected_answer: {
+    must_have: ["operation endpoint"],
+    nice_to_have: ["audit"],
+    red_flags: ["generic CRUD"],
+  },
+  rubric: {
+    must_have: ["operation endpoint"],
+    nice_to_have: ["audit"],
+    red_flags: ["generic CRUD"],
+  },
+  canonical_short_answer: "Use operation endpoints for meaningful business operations.",
+  canonical_deep_answer: null,
+  tags: ["rapid_fundamentals", "betterstack", "peterheinz", "api_design"],
   is_active: true,
 });
 
@@ -127,6 +195,202 @@ test("rotation does not repeat the exact same drill in a fresh session", () => {
   );
 });
 
+test("rotation hard-blocks a drill already seen in the current session", () => {
+  withOnlyActiveDrills(["session-repeat-a", "session-repeat-b"], () => {
+    const uid = "current-session-repeat-user";
+    users.ensure(uid);
+    const session = sessions.create(uid, "mixed");
+    attempts.createPending({
+      user_id: uid,
+      session_id: session.id,
+      drill_id: "session-repeat-a",
+    });
+
+    const drill = selectNextDrill({
+      user_id: uid,
+      session_id: session.id,
+      mode: "mixed",
+    });
+
+    assert.equal(drill?.id, "session-repeat-b");
+  });
+});
+
+test("rotation hard-blocks a drill inside the last 30 picks", () => {
+  withOnlyActiveDrills(["recent-repeat-a", "recent-repeat-b"], () => {
+    const uid = "recent-repeat-user";
+    users.ensure(uid);
+    const oldSession = sessions.create(uid, "mixed");
+    attempts.createPending({
+      user_id: uid,
+      session_id: oldSession.id,
+      drill_id: "recent-repeat-a",
+    });
+    const session = sessions.create(uid, "mixed");
+
+    const drill = selectNextDrill({
+      user_id: uid,
+      session_id: session.id,
+      mode: "mixed",
+    });
+
+    assert.equal(drill?.id, "recent-repeat-b");
+  });
+});
+
+test("failed drills become eligible after the 2 hour interval", () => {
+  withOnlyActiveDrills(["failed-due-a", "failed-due-b"], () => {
+    const uid = "failed-interval-user";
+    users.ensure(uid);
+    const oldSession = sessions.create(uid, "mixed");
+    createGradedAttemptAt({
+      user_id: uid,
+      session_id: oldSession.id,
+      drill_id: "failed-due-a",
+      score: 0.1,
+      verdict: "fail",
+      ageHours: 3,
+    });
+    const session = sessions.create(uid, "mixed");
+    attempts.createPending({
+      user_id: uid,
+      session_id: session.id,
+      drill_id: "failed-due-b",
+    });
+
+    const drill = selectNextDrill({
+      user_id: uid,
+      session_id: session.id,
+      mode: "mixed",
+      exclude_recent_count: 0,
+    });
+
+    assert.equal(drill?.id, "failed-due-a");
+  });
+});
+
+test("failed drills stay blocked before the 2 hour interval", () => {
+  withOnlyActiveDrills(["failed-blocked-a", "failed-blocked-b"], () => {
+    const uid = "failed-blocked-user";
+    users.ensure(uid);
+    const oldSession = sessions.create(uid, "mixed");
+    createGradedAttemptAt({
+      user_id: uid,
+      session_id: oldSession.id,
+      drill_id: "failed-blocked-a",
+      score: 0.1,
+      verdict: "fail",
+      ageHours: 1,
+    });
+    const session = sessions.create(uid, "mixed");
+
+    const drill = selectNextDrill({
+      user_id: uid,
+      session_id: session.id,
+      mode: "mixed",
+      exclude_recent_count: 0,
+    });
+
+    assert.equal(drill?.id, "failed-blocked-b");
+  });
+});
+
+test("borderline drills become eligible after the 6 hour interval", () => {
+  withOnlyActiveDrills(["borderline-due-a", "borderline-due-b"], () => {
+    const uid = "borderline-interval-user";
+    users.ensure(uid);
+    const oldSession = sessions.create(uid, "mixed");
+    createGradedAttemptAt({
+      user_id: uid,
+      session_id: oldSession.id,
+      drill_id: "borderline-due-a",
+      score: 0.65,
+      verdict: "borderline",
+      ageHours: 7,
+    });
+    const session = sessions.create(uid, "mixed");
+    attempts.createPending({
+      user_id: uid,
+      session_id: session.id,
+      drill_id: "borderline-due-b",
+    });
+
+    const drill = selectNextDrill({
+      user_id: uid,
+      session_id: session.id,
+      mode: "mixed",
+      exclude_recent_count: 0,
+    });
+
+    assert.equal(drill?.id, "borderline-due-a");
+  });
+});
+
+test("passed drills become eligible after the 18 hour interval", () => {
+  withOnlyActiveDrills(["passed-due-a", "passed-due-b"], () => {
+    const uid = "passed-interval-user";
+    users.ensure(uid);
+    const oldSession = sessions.create(uid, "mixed");
+    createGradedAttemptAt({
+      user_id: uid,
+      session_id: oldSession.id,
+      drill_id: "passed-due-a",
+      score: 0.9,
+      verdict: "pass",
+      ageHours: 19,
+    });
+    const session = sessions.create(uid, "mixed");
+    attempts.createPending({
+      user_id: uid,
+      session_id: session.id,
+      drill_id: "passed-due-b",
+    });
+
+    const drill = selectNextDrill({
+      user_id: uid,
+      session_id: session.id,
+      mode: "mixed",
+      exclude_recent_count: 0,
+    });
+
+    assert.equal(drill?.id, "passed-due-a");
+  });
+});
+
+test("rotation falls back to the least-recently-seen drill when all are blocked", () => {
+  withOnlyActiveDrills(["fallback-old", "fallback-new"], () => {
+    const uid = "fallback-repeat-user";
+    users.ensure(uid);
+    const oldSession = sessions.create(uid, "mixed");
+    createGradedAttemptAt({
+      user_id: uid,
+      session_id: oldSession.id,
+      drill_id: "fallback-old",
+      score: 0.2,
+      verdict: "fail",
+      ageHours: 1,
+    });
+    createGradedAttemptAt({
+      user_id: uid,
+      session_id: oldSession.id,
+      drill_id: "fallback-new",
+      score: 0.2,
+      verdict: "fail",
+      ageHours: 0.5,
+    });
+    const session = sessions.create(uid, "mixed");
+
+    const drill = selectNextDrill({
+      user_id: uid,
+      session_id: session.id,
+      mode: "mixed",
+      exclude_recent_count: 0,
+    });
+
+    assert.equal(drill?.id, "fallback-old");
+  });
+});
+
 test("db_indexes mode only returns database drills", () => {
   const session = sessions.create(userId, "db_indexes");
   for (let i = 0; i < 10; i++) {
@@ -166,6 +430,22 @@ test("rapid_fundamentals mode only returns tagged rapid drills", () => {
     });
   }
   assert.ok(topics.size >= 2, `expected topic balance, got ${[...topics]}`);
+});
+
+test("betterstack_peterheinz mode only returns Petr-tagged drills", () => {
+  const session = sessions.create(userId, "betterstack_peterheinz");
+  for (let i = 0; i < 5; i++) {
+    const drill = selectNextDrill({
+      user_id: userId,
+      session_id: session.id,
+      mode: "betterstack_peterheinz",
+    });
+    assert.ok(drill);
+    assert.ok(
+      drill!.tags.includes("peterheinz"),
+      `${drill!.id} missing peterheinz tag`,
+    );
+  }
 });
 
 test("weak_topics mode surfaces high-weakness subtopics", () => {

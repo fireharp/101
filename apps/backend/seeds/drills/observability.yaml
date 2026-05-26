@@ -36,5 +36,9 @@
     cold starts, retry storms. Fix the bottleneck shown in traces, not the
     average.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Checkout API has normal average latency but rare 5-second requests."
+      why_it_fits: "Tail traces reveal whether the slow path is DB, queueing, GC, or retries."
+      gotcha: "Optimizing the mean can leave the user-visible p99 untouched."
   tags: [latency, observability, slo]
   is_active: true

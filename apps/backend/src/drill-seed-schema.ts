@@ -6,6 +6,12 @@ const rubricSchema = z.object({
   red_flags: z.array(z.string()),
 });
 
+export const practicalExampleSchema = z.object({
+  use_case: z.string().min(1),
+  why_it_fits: z.string().min(1),
+  gotcha: z.string().min(1),
+});
+
 export const drillSeedSchema = z.object({
   id: z.string(),
   topic: z.string(),
@@ -17,6 +23,7 @@ export const drillSeedSchema = z.object({
   rubric: rubricSchema,
   canonical_short_answer: z.string(),
   canonical_deep_answer: z.string().nullable().optional(),
+  examples: z.array(practicalExampleSchema).optional().default([]),
   tags: z.array(z.string()).optional().default([]),
   is_active: z.boolean().optional().default(true),
 });

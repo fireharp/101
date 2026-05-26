@@ -4,7 +4,24 @@ export type Mode =
   | "system_design"
   | "weak_topics"
   | "mock_interview"
-  | "rapid_fundamentals";
+  | "rapid_fundamentals"
+  | "betterstack_peterheinz";
+
+export interface PracticalExample {
+  use_case: string;
+  why_it_fits: string;
+  gotcha: string;
+}
+
+export interface GeneratedCardPayload {
+  id?: string;
+  front: string;
+  back: string;
+  topic?: string | null;
+  subtopic?: string | null;
+  next_due_at?: string | null;
+  examples?: PracticalExample[];
+}
 
 export interface DrillPayload {
   drill_id: string;
@@ -19,6 +36,7 @@ export interface DrillPayload {
     nice_to_have: string[];
     red_flags: string[];
   };
+  examples?: PracticalExample[];
   prior_attempts?: {
     score: number;
     verdict: string | null;
@@ -70,7 +88,8 @@ export interface GradeResult {
   covered_points?: string[];
   missed_points: string[];
   ideal_short_answer: string;
-  cards: { id?: string; front: string; back: string }[];
+  examples?: PracticalExample[];
+  cards: GeneratedCardPayload[];
   breakdown: {
     must_have_coverage: number;
     answer_clarity: number;
@@ -78,6 +97,28 @@ export interface GradeResult {
     speed_score: number;
     red_flag_penalty: number;
   };
+}
+
+export interface GradingEvaluation {
+  id: string;
+  user_id: string;
+  session_id: string;
+  attempt_id: string;
+  drill_id: string;
+  provider: "openrouter";
+  model: string;
+  score: number | null;
+  verdict: "pass" | "borderline" | "fail" | null;
+  covered_points: string[] | null;
+  missed_points: string[] | null;
+  ideal_answer: string | null;
+  raw_json: Record<string, unknown> | null;
+  latency_ms: number | null;
+  error: string | null;
+  estimated_cost_usd: number | null;
+  prompt_hash: string;
+  created_at: string;
+  cached?: boolean;
 }
 
 export interface RealtimeToken {
@@ -229,6 +270,7 @@ export const api = {
       ok: boolean;
       drills: number;
       openai_configured: boolean;
+      openrouter_configured?: boolean;
       elevenlabs_configured?: boolean;
       elevenlabs_api_key_present?: boolean;
       voice_provider?: VoiceProvider;
@@ -327,14 +369,7 @@ export const api = {
 
   cardsDue: (limit = 20) =>
     jsonFetch<{
-      cards: {
-        id: string;
-        front: string;
-        back: string;
-        topic: string | null;
-        subtopic: string | null;
-        next_due_at: string | null;
-      }[];
+      cards: (GeneratedCardPayload & { id: string })[];
       stats: { total: number; due: number };
     }>(`/api/cards/due?limit=${limit}`),
 
@@ -405,9 +440,10 @@ export const api = {
         verdict: "pass" | "borderline" | "fail" | null;
         missed_points: string[] | null;
         ideal_answer: string | null;
-        created_cards: { front: string; back: string }[] | null;
+        created_cards: GeneratedCardPayload[] | null;
         created_at: string;
       };
+      evaluations: GradingEvaluation[];
       drill: {
         id: string;
         topic: string;
@@ -418,6 +454,24 @@ export const api = {
         rubric: { must_have: string[]; nice_to_have: string[]; red_flags: string[] };
       } | null;
     }>(`/api/drill-attempts/${attemptId}`),
+
+  attemptEvaluations: (attemptId: string) =>
+    jsonFetch<{ evaluations: GradingEvaluation[] }>(
+      `/api/drill-attempts/${attemptId}/evaluations`,
+    ),
+
+  evaluateAttempt: (
+    attemptId: string,
+    modelsPolicy: "free-pinned" | "free-router" = "free-pinned",
+  ) =>
+    jsonFetch<{
+      evaluations: GradingEvaluation[];
+      prompt_hash: string;
+      models: string[];
+    }>(`/api/drill-attempts/${attemptId}/evaluate`, {
+      method: "POST",
+      body: JSON.stringify({ models_policy: modelsPolicy }),
+    }),
 
   progressDrills: (limit = 10) =>
     jsonFetch<{
@@ -472,6 +526,7 @@ export const api = {
         trap_type: string | null;
         question_text: string;
         canonical_short_answer: string;
+        examples: PracticalExample[];
         rubric: {
           must_have: string[];
           nice_to_have: string[];
@@ -505,6 +560,7 @@ export const api = {
       canonical_short_answer?: string;
       difficulty?: number;
       trap_type?: string | null;
+      examples?: PracticalExample[];
       rubric?: {
         must_have: string[];
         nice_to_have: string[];
@@ -518,6 +574,7 @@ export const api = {
         id: string;
         rubric: { must_have: string[]; nice_to_have: string[]; red_flags: string[] };
         canonical_short_answer: string;
+        examples: PracticalExample[];
       };
     }>(`/api/drills/${id}`, {
       method: "PATCH",
@@ -531,6 +588,7 @@ export const api = {
       verdict: "pass" | "borderline" | "fail";
       missed_points: string[];
       ideal_short_answer: string;
+      examples?: PracticalExample[];
       breakdown: {
         must_have_coverage: number;
         answer_clarity: number;
@@ -538,7 +596,7 @@ export const api = {
         speed_score: number;
         red_flag_penalty: number;
       };
-      cards: { front: string; back: string }[];
+      cards: GeneratedCardPayload[];
     }>(`/api/drills/${id}/test-grade`, {
       method: "POST",
       body: JSON.stringify({
@@ -558,6 +616,7 @@ export const api = {
         trap_type: string | null;
         question_text: string;
         canonical_short_answer: string;
+        examples: PracticalExample[];
         rubric: {
           must_have: string[];
           nice_to_have: string[];

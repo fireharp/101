@@ -1,0 +1,381 @@
+- id: jwt_signing_hmac_vs_asymmetric_001
+  topic: security
+  subtopic: jwt_signing
+  difficulty: 3
+  trap_type: key_distribution_confusion
+  question_text: >
+    Compare HS256/HMAC with RS256/RSA and ES256/ECDSA for JWT signing. What key
+    does the issuer use, what key does the verifier use, and what is the main
+    architecture tradeoff?
+  expected_answer:
+    must_have:
+      - HMAC uses one shared secret for signing and verification
+      - RSA and ECDSA use a private key to sign and a public key to verify
+      - HMAC verifiers can also mint valid tokens if they know the secret
+      - asymmetric verification lets many services verify without holding the signing key
+    nice_to_have:
+      - HMAC is technically a MAC not an asymmetric digital signature
+      - public keys can be distributed through JWKS
+      - asymmetric signing is common across trust boundaries
+      - HMAC is cheaper and simpler when one deployable owns both signing and verification
+    red_flags:
+      - public key can sign RS256 tokens
+      - HMAC secret is safe to share with every service
+  rubric:
+    must_have:
+      - shared secret for HMAC
+      - private/public key split for RSA or ECDSA
+      - blast radius of shared secret
+      - verifier-only public key benefit
+    nice_to_have:
+      - MAC versus signature nuance
+      - JWKS distribution
+      - computational and operational overhead tradeoff
+    red_flags:
+      - confuse private and public keys
+      - ignore key distribution
+  canonical_short_answer: >
+    HS256 uses HMAC: the same high-entropy secret signs and verifies, so any
+    verifier with that secret can also mint tokens. RS256 and ES256 are
+    asymmetric: the issuer signs with a private key and services verify with the
+    public key. That is usually safer across services because verifiers do not
+    need the signing key; a public key leak does not let an attacker create
+    tokens. The tradeoff is extra operational complexity and usually more CPU
+    cost than HMAC, so HS256 can be reasonable inside a small trusted boundary.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Auth service issues tokens that many resource services verify."
+      why_it_fits: "Asymmetric keys let services verify without receiving signing power."
+      gotcha: "Sharing an HMAC secret with every verifier expands the blast radius."
+  tags: [auth, jwt, hmac, rsa, ecdsa, signing]
+  is_active: true
+
+- id: jwt_signing_alg_confusion_002
+  topic: security
+  subtopic: jwt_signing
+  difficulty: 4
+  trap_type: algorithm_confusion
+  question_text: >
+    Your API expects RS256 JWTs. A library reads the token header alg and
+    automatically supports HS256 and none. What is the vulnerability and the
+    correct verification rule?
+  expected_answer:
+    must_have:
+      - do not trust alg from the token as policy
+      - pin allowed algorithms server-side
+      - reject none unless explicitly designed for an unsecured JWT path
+      - prevent RS256 to HS256 confusion using the public key as an HMAC secret
+    nice_to_have:
+      - bind algorithm to issuer and key type
+      - use vetted JWT/JWS libraries with strict options
+    red_flags:
+      - accept whatever alg is in the header
+      - decode the JWT and trust claims before verification
+  rubric:
+    must_have:
+      - server-side algorithm allowlist
+      - reject none
+      - algorithm/key-type binding
+      - explain HS/RS confusion
+    nice_to_have:
+      - issuer-specific policy
+      - vetted library config
+    red_flags:
+      - header controls security policy
+      - accept unsigned tokens
+  canonical_short_answer: >
+    The JWT header is attacker-controlled input. Verification policy must say
+    this issuer uses RS256 with an RSA public key, not whatever alg the token
+    asks for. Otherwise an attacker may switch alg to HS256 and try to use the
+    RSA public key as an HMAC secret, or switch to none if the library permits
+    unsigned tokens. Pin algorithms and key types per issuer.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "API gateway validates third-party RS256 identity tokens."
+      why_it_fits: "Pinned issuer policy prevents attacker-chosen alg and key-type confusion."
+      gotcha: "Decoding claims before verification can turn header input into policy."
+  tags: [auth, jwt, jose, alg, security]
+  is_active: true
+
+- id: jwt_signing_claims_after_signature_003
+  topic: security
+  subtopic: jwt_validation
+  difficulty: 3
+  trap_type: signature_equals_authorization
+  question_text: >
+    After a JWT signature verifies successfully, what still must be validated
+    before accepting it for an API request?
+  expected_answer:
+    must_have:
+      - validate exp and nbf with small clock skew policy
+      - validate iss against trusted issuer
+      - validate aud matches this API
+      - authorize from trusted scopes or roles, not just signature validity
+    nice_to_have:
+      - check token type or typ/use to avoid cross-token confusion
+      - jti or token version for revocation-sensitive paths
+      - iat max age policy
+    red_flags:
+      - valid signature means admin access
+      - ignore audience because issuer is trusted
+  rubric:
+    must_have:
+      - expiration and not-before
+      - issuer
+      - audience
+      - separate authentication from authorization
+    nice_to_have:
+      - token type confusion
+      - jti or versioning
+    red_flags:
+      - signature only check
+      - trust arbitrary role claim
+  canonical_short_answer: >
+    A valid signature only proves the token was issued by whoever controls the
+    signing key and was not modified. The verifier still checks time claims like
+    exp and nbf, the expected issuer, the expected audience for this API, and
+    then performs authorization from trusted scopes or roles. Do not treat a
+    validly signed token for another service or token type as valid here.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Billing API receives a token minted for the profile API."
+      why_it_fits: "Audience validation rejects valid tokens meant for another service."
+      gotcha: "Signature validity is authentication evidence, not authorization by itself."
+  tags: [auth, jwt, claims, validation, security]
+  is_active: true
+
+- id: jwt_signing_jwks_rotation_004
+  topic: security
+  subtopic: key_rotation
+  difficulty: 4
+  trap_type: untrusted_key_lookup
+  question_text: >
+    You verify third-party RS256 JWTs using JWKS and kid. How should key
+    rotation work, and what should you not trust from the token header?
+  expected_answer:
+    must_have:
+      - fetch keys only from a trusted issuer-configured JWKS URL
+      - use kid to select among trusted keys, not to construct arbitrary URLs or paths
+      - cache JWKS with refresh on unknown kid and expiry policy
+      - overlap old and new keys until old tokens expire
+    nice_to_have:
+      - bind keys to issuer and algorithm
+      - handle emergency key revocation
+      - reject duplicate or ambiguous kid entries
+    red_flags:
+      - trust jku or x5u from any token header
+      - download a key from a URL supplied by the attacker
+  rubric:
+    must_have:
+      - trusted JWKS source
+      - kid selects trusted key
+      - cache and refresh behavior
+      - rotation overlap
+    nice_to_have:
+      - issuer/alg binding
+      - emergency revocation
+    red_flags:
+      - attacker-controlled key discovery
+      - no rotation window
+  canonical_short_answer: >
+    The issuer configuration tells you the JWKS endpoint; the token header does
+    not get to choose a key URL. Use kid only to pick a key from that trusted key
+    set, with caching and refresh when an unknown kid appears. During rotation,
+    publish the new public key before signing with it and keep old keys until old
+    tokens expire. Bind each key to the expected issuer and algorithm.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Identity provider rotates RS256 keys while old tokens remain valid."
+      why_it_fits: "JWKS overlap lets verifiers accept old and new keys through token expiry."
+      gotcha: "Never fetch keys from jku or x5u values supplied by an untrusted token."
+  tags: [auth, jwt, jwks, kid, key_rotation]
+  is_active: true
+
+- id: jwt_signing_not_encryption_005
+  topic: security
+  subtopic: jwt_signing
+  difficulty: 2
+  trap_type: signature_confidentiality_confusion
+  question_text: >
+    A teammate says JWTs are safe for sensitive data because they are signed.
+    What is wrong with that statement?
+  expected_answer:
+    must_have:
+      - signed JWTs are integrity-protected, not encrypted
+      - header and payload are base64url encoded and readable by clients
+      - do not put secrets or unnecessary sensitive data in claims
+      - use TLS and server-side lookup or JWE if confidentiality is required
+    nice_to_have:
+      - minimize PII and token size
+      - access tokens should carry only needed authorization context
+    red_flags:
+      - base64url means encrypted
+      - signature hides the payload
+  rubric:
+    must_have:
+      - signing provides integrity
+      - payload is readable
+      - avoid secrets in claims
+      - confidentiality requires another control
+    nice_to_have:
+      - claim minimization
+      - TLS
+    red_flags:
+      - confuse encoding and encryption
+      - store passwords in claims
+  canonical_short_answer: >
+    A normal signed JWT is a JWS: it protects integrity and issuer authenticity,
+    not confidentiality. The header and payload are base64url encoded, so clients
+    and logs can read the claims. Keep claims minimal, never include secrets, use
+    TLS in transport, and use server-side lookup or encryption only when you
+    truly need confidential token contents.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Team wants to include SSNs in signed access-token claims."
+      why_it_fits: "The example separates tamper protection from confidentiality."
+      gotcha: "Base64url encoding is readable and often lands in logs."
+  tags: [auth, jwt, jws, encryption, security]
+  is_active: true
+
+- id: jwt_signing_ecdsa_nuances_006
+  topic: security
+  subtopic: jwt_signing
+  difficulty: 4
+  trap_type: crypto_implementation_details
+  question_text: >
+    What are the practical JWT nuances of choosing ES256/ECDSA instead of
+    RS256/RSA or HS256/HMAC?
+  expected_answer:
+    must_have:
+      - ECDSA is asymmetric and verifies with a public key
+      - smaller signatures and keys than RSA for similar security level
+      - signing must use safe nonce generation or deterministic ECDSA
+      - use a standard JOSE library instead of hand-encoding signatures
+    nice_to_have:
+      - JWT ES256 signatures use JOSE fixed-size raw r and s form
+      - EdDSA is another modern asymmetric option where supported
+      - operational compatibility may favor RS256
+    red_flags:
+      - reuse ECDSA nonce safely
+      - hand-roll ECDSA formatting
+  rubric:
+    must_have:
+      - asymmetric key model
+      - size/performance tradeoff
+      - nonce safety
+      - standard library
+    nice_to_have:
+      - JOSE signature format
+      - compatibility considerations
+    red_flags:
+      - custom crypto
+      - nonce reuse
+  canonical_short_answer: >
+    ES256 is asymmetric like RS256: sign with the private key, verify with the
+    public key. It usually gives smaller keys and signatures than RSA, but ECDSA
+    is sensitive to nonce generation; repeated or biased nonces can leak the
+    private key. For JWTs, use a mature JOSE library that handles the ES256
+    signature format and key validation. RS256 may still win when compatibility
+    and operational familiarity matter.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Mobile-heavy API wants smaller JWT signatures than RS256."
+      why_it_fits: "ES256 reduces token size while keeping asymmetric verification."
+      gotcha: "Bad ECDSA nonce handling can leak the private key."
+  tags: [auth, jwt, ecdsa, rsa, crypto]
+  is_active: true
+
+- id: jwt_signing_hmac_secret_strength_007
+  topic: security
+  subtopic: jwt_signing
+  difficulty: 3
+  trap_type: weak_shared_secret
+  question_text: >
+    What can go wrong if HS256 uses a human-readable shared secret like
+    "secret123", and what is the right operational practice?
+  expected_answer:
+    must_have:
+      - attacker can brute-force weak HMAC secrets offline from a captured JWT
+      - use high-entropy randomly generated secrets
+      - keep the secret in a secret manager or KMS-backed config
+      - rotate secrets with a planned overlap or token invalidation strategy
+    nice_to_have:
+      - prefer asymmetric keys when many independent services verify tokens
+      - separate secrets per issuer or environment
+    red_flags:
+      - HS256 is safe with any password because SHA-256 is strong
+      - hardcode the secret in source control
+  rubric:
+    must_have:
+      - offline brute force risk
+      - high entropy
+      - secure storage
+      - rotation plan
+    nice_to_have:
+      - asymmetric alternative for distribution
+      - environment separation
+    red_flags:
+      - weak password secret
+      - source-controlled secret
+  canonical_short_answer: >
+    With HS256, anyone who captures a token can test guessed secrets offline by
+    recomputing the HMAC. A weak string like "secret123" can let attackers forge
+    tokens. Use a long random secret from a secret manager, separate it by
+    issuer/environment, restrict access to services that truly need signing
+    power, and rotate with overlap or controlled token invalidation.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Internal API signs HS256 tokens with an environment variable secret."
+      why_it_fits: "A random secret in a secret manager resists offline guessing from captured JWTs."
+      gotcha: "A human password secret can be brute-forced without touching your servers."
+  tags: [auth, jwt, hmac, secrets, security]
+  is_active: true
+
+- id: jwt_signing_architecture_choice_008
+  topic: security
+  subtopic: jwt_signing
+  difficulty: 3
+  trap_type: one_algorithm_always_best
+  question_text: >
+    When would you choose HS256/HMAC versus RS256/ES256 for JWTs in a monolith,
+    internal microservices, or third-party verifier architecture?
+  expected_answer:
+    must_have:
+      - HMAC can be simpler and faster for one trusted deployable or tightly controlled internal boundary
+      - HMAC secret sharing gives every verifier signing power
+      - asymmetric signing is better when many services or third parties only need verification
+      - choose based on trust boundary key distribution and rotation needs
+    nice_to_have:
+      - asymmetric algorithms add CPU and JWKS/key-management overhead
+      - public keys are safe to distribute broadly
+      - use separate issuers or keys per environment/service boundary
+    red_flags:
+      - RSA or ECDSA is always better in every deployment
+      - HMAC is safe for untrusted third-party verifiers
+  rubric:
+    must_have:
+      - monolith or single deployable case for HMAC
+      - shared-secret blast radius
+      - microservice or third-party verifier case for asymmetric keys
+      - decision based on trust and key distribution
+    nice_to_have:
+      - CPU and JWKS overhead
+      - rotation and environment separation
+    red_flags:
+      - ignore overhead
+      - expose HMAC secret externally
+  canonical_short_answer: >
+    In a monolith or a small trusted backend where the same deployable signs and
+    verifies tokens, HS256 can be simpler and cheaper. Once multiple independent
+    services, separately deployed teams, or third parties need to verify tokens,
+    sharing an HMAC secret gives all of them signing power. RS256 or ES256 lets
+    the issuer keep the private key while verifiers use public keys, usually via
+    JWKS. That adds CPU and key-management overhead, but reduces signing-key
+    blast radius.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Monolith today, partner API verification planned next quarter."
+      why_it_fits: "HS256 may fit the monolith, but partners should receive only public keys."
+      gotcha: "Algorithm choice should follow trust boundaries, not preference alone."
+  tags: [auth, jwt, architecture, hmac, rsa, ecdsa]
+  is_active: true

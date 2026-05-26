@@ -36,6 +36,10 @@
     instead, and route per-user observability to logs or traces. Use
     histograms for distribution rather than per-entity counters.
   canonical_deep_answer: null
+  examples:
+    - use_case: "HTTP request counter labeled by user_id"
+      why_it_fits: "Millions of users create millions of series for one metric."
+      gotcha: "Use logs or traces for per-user debugging; metrics labels should stay bounded."
   tags: [prometheus, metrics, observability]
   is_active: true
 
@@ -77,5 +81,9 @@
     granularity is for incident debugging. Thanos / Mimir / VictoriaMetrics
     do this natively.
   canonical_deep_answer: null
+  examples:
+    - use_case: "One year of service latency metrics"
+      why_it_fits: "Recent raw samples help incidents; older data only needs trend-level aggregates."
+      gotcha: "Downsampling loses detail, so keep raw data only for the debugging window."
   tags: [metrics, retention, storage]
   is_active: true

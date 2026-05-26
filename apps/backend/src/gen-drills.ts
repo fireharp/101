@@ -144,6 +144,7 @@ async function generate(args: CliArgs) {
       rubric: d.rubric,
       canonical_short_answer: d.canonical_short_answer,
       canonical_deep_answer: null,
+      examples: [],
       tags: [...(d.tags ?? []), "gen:llm", `gen-difficulty:${d.difficulty}`],
       is_active: false,
     };

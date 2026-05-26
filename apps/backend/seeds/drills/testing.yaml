@@ -36,6 +36,10 @@
     keep maybe 50 of them, push the rest down. Quarantine flaky tests and
     fix root causes; don't just delete them.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Checkout flow covered only by Selenium"
+      why_it_fits: "Business rules can move to unit/integration tests while one E2E keeps the full happy path."
+      gotcha: "Do not delete flakes until you know whether they reveal real race conditions."
   tags: [testing, ci]
   is_active: true
 
@@ -77,5 +81,9 @@
     isolate state per test, log enough context, and fix it. Retries paper
     over real bugs that will surface in production later.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Invoice test fails only in parallel CI"
+      why_it_fits: "Shared fixtures or order dependency can make one test mutate state another test assumes."
+      gotcha: "Retries reduce noise but can hide production concurrency bugs."
   tags: [testing, ci, flaky]
   is_active: true

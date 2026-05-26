@@ -36,6 +36,10 @@
     the pool to avoid head-of-line blocking when the downstream slows. Use
     HTTP/2 for multiplexing if the downstream supports it.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Checkout service calling a tax API"
+      why_it_fits: "Thousands of small HTTPS calls pay TLS handshake cost if every request opens a connection."
+      gotcha: "An unbounded pool can exhaust downstream capacity during a slowdown."
   tags: [http, latency, scaling]
   is_active: true
 
@@ -77,5 +81,9 @@
     HTTP client to re-resolve, or put a load balancer / proxy with a stable
     VIP in front so DNS doesn't change at all.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Primary database endpoint fails over"
+      why_it_fits: "App processes may keep a cached IP even after the DNS record points at the new primary."
+      gotcha: "Some runtimes cache DNS longer than expected; test client behavior, not only DNS TTL."
   tags: [dns, failover]
   is_active: true

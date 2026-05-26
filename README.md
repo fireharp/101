@@ -122,6 +122,11 @@ pnpm smoke:all       # CI gate (with --offline-only) and pre-release every-layer
 | `OPENAI_REALTIME_TRANSCRIPTION_MODEL` | `gpt-4o-mini-transcribe` | ASR model for user audio transcript events |
 | `OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE` | — | optional language hint, e.g. `en` |
 | `OPENAI_GRADING_MODEL` | `gpt-4.1-mini` | text grading after attempt |
+| `OPENROUTER_API_KEY` | — | optional; enables shadow grader benchmarking only |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible OpenRouter endpoint |
+| `OPENROUTER_MODEL_TTL_MS` | `600000` | cache TTL for OpenRouter model list |
+| `OPENROUTER_COOLDOWN_MS` | `600000` | temporary skip window for unavailable/rate-limited free models |
+| `OPENROUTER_TIMEOUT_MS` | `20000` | per-model shadow grading timeout |
 | `OPENAI_REALTIME_PROMPT_ID` | — | optional Playground prompt id; when set, the backend sends `prompt: { id }` instead of inlining `DRILL_COACH_INSTRUCTIONS` |
 | `OPENAI_REALTIME_PROMPT_VERSION` | — | optional version pin for the Playground prompt above; bump after iterating on `seeds/realtime-prompt.md` |
 | `OPENAI_REALTIME_VOICE_SPEED` | `1.25` | clamped to `[0.25, 1.5]`; higher = faster speech |
@@ -221,6 +226,8 @@ Verdict: `>= 0.80 pass`, `0.60–0.79 borderline`, `< 0.60 fail`.
 | `POST` | `/api/drill-attempts/:id/transcript` | save transcript + duration |
 | `POST` | `/api/drill-attempts/:id/grade` | grade an attempt (LLM or offline) |
 | `GET`  | `/api/drill-attempts/:id` | full attempt detail (transcript, missed points, ideal answer, cards) — owner-scoped |
+| `POST` | `/api/drill-attempts/:id/evaluate` | run OpenRouter shadow grading; does not mutate live score/cards |
+| `GET`  | `/api/drill-attempts/:id/evaluations` | list stored shadow grader evaluations for an attempt |
 | `GET`  | `/api/cards/due` | due review cards + total/due stats |
 | `POST` | `/api/cards/:id/review` | record SM-2-lite review (`quality` 0/1) |
 | `GET`  | `/api/cards/export.csv` | Anki-importable CSV (`front,back,tags`) |
@@ -278,6 +285,17 @@ pnpm --filter @drill/backend gen:drills -- \
 Inserts drills as `is_active=false` drafts so the rotation engine never
 serves them until a human flips the bit. Tagged with `gen:llm` for filtering.
 Uses `OPENAI_GRADING_MODEL` (default `gpt-4.1-mini`).
+
+### Shadow grader benchmark
+
+```bash
+pnpm --filter @drill/backend bench:grader --source historical --models free-pinned --limit 25
+pnpm --filter @drill/backend bench:grader --source attempt --attempt-id <id>
+```
+
+Requires `OPENROUTER_API_KEY`. Results are stored in `grading_evaluations` and
+never overwrite the live attempt score, cards, or skill state. The default
+model policy only uses OpenRouter models currently reported as zero-cost.
 
 Review and activate drafts from the UI: click **Show drafts** in the header
 to see every `is_active=false` drill with rubric preview, then **Activate**

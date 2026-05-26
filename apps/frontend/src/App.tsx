@@ -12,8 +12,11 @@ import {
 import {
   api,
   type DrillPayload,
+  type GeneratedCardPayload,
   type GradeResult,
+  type GradingEvaluation,
   type Mode,
+  type PracticalExample,
   type RealtimeSettings,
   type RealtimeUsageEvent,
   type SessionPayload,
@@ -31,6 +34,7 @@ import { useElevenLabs } from "./useElevenLabs.ts";
 const MODES: { value: Mode; label: string }[] = [
   { value: "mixed", label: "Mixed" },
   { value: "rapid_fundamentals", label: "Rapid fundamentals" },
+  { value: "betterstack_peterheinz", label: "Better Stack / Petr" },
   { value: "db_indexes", label: "DB indexes" },
   { value: "system_design", label: "System design" },
   { value: "weak_topics", label: "Weak topics" },
@@ -77,6 +81,21 @@ interface ConceptEntry {
   example: string;
   references: ConceptReference[];
 }
+
+interface DrillBankItem {
+  id: string;
+  topic: string;
+  subtopic: string;
+  difficulty: number;
+  trap_type: string | null;
+  question_text: string;
+  canonical_short_answer: string;
+  examples: PracticalExample[];
+  rubric: { must_have: string[]; nice_to_have: string[]; red_flags: string[] };
+  tags?: string[];
+}
+
+type DueCard = GeneratedCardPayload & { id: string };
 
 const CONCEPTS: ConceptEntry[] = [
   {
@@ -891,33 +910,13 @@ export function App() {
       last_score: number | null;
     }[]
   >([]);
-  const [dueCards, setDueCards] = useState<
-    {
-      id: string;
-      front: string;
-      back: string;
-      topic: string | null;
-      subtopic: string | null;
-    }[]
-  >([]);
+  const [dueCards, setDueCards] = useState<DueCard[]>([]);
   const [cardStats, setCardStats] = useState<{ total: number; due: number }>({
     total: 0,
     due: 0,
   });
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
-  const [drillBrowse, setDrillBrowse] = useState<
-    | {
-        id: string;
-        topic: string;
-        subtopic: string;
-        difficulty: number;
-        trap_type: string | null;
-        question_text: string;
-        canonical_short_answer: string;
-        rubric: { must_have: string[]; nice_to_have: string[]; red_flags: string[] };
-      }[]
-    | null
-  >(null);
+  const [drillBrowse, setDrillBrowse] = useState<DrillBankItem[] | null>(null);
   const [drillBrowseOpen, setDrillBrowseOpen] = useState(false);
   const [drillBrowseFilter, setDrillBrowseFilter] = useState<string>("");
   const [expandedDrill, setExpandedDrill] = useState<string | null>(null);
@@ -958,7 +957,11 @@ export function App() {
       ideal_answer: string | null;
     };
     drill: { question_text: string } | null;
+    evaluations: GradingEvaluation[];
   } | null>(null);
+  const [evaluatingAttemptId, setEvaluatingAttemptId] = useState<string | null>(
+    null,
+  );
   const [drillCount, setDrillCount] = useState(0);
   const [pressureMode, setPressureMode] = useState(false);
   const [realtimeSettings, setRealtimeSettings] = useState<RealtimeSettings>(
@@ -983,19 +986,7 @@ export function App() {
   >([]);
   const MOCK_TARGET = 7;
   const SESSION_STORAGE_KEY = "drillCoachSession";
-  const [drafts, setDrafts] = useState<
-    | {
-        id: string;
-        topic: string;
-        subtopic: string;
-        difficulty: number;
-        trap_type: string | null;
-        question_text: string;
-        canonical_short_answer: string;
-        rubric: { must_have: string[]; nice_to_have: string[]; red_flags: string[] };
-      }[]
-    | null
-  >(null);
+  const [drafts, setDrafts] = useState<DrillBankItem[] | null>(null);
   const [draftsOpen, setDraftsOpen] = useState(false);
   const [testTranscript, setTestTranscript] = useState<Record<string, string>>(
     {},
@@ -1009,12 +1000,14 @@ export function App() {
     nice_to_have: string;
     red_flags: string;
     canonical_short_answer: string;
+    examples: string;
     difficulty: number;
   }>({
     must_have: "",
     nice_to_have: "",
     red_flags: "",
     canonical_short_answer: "",
+    examples: "",
     difficulty: 3,
   });
   const [savingEdit, setSavingEdit] = useState(false);
@@ -1050,8 +1043,9 @@ export function App() {
       ? `tokens ${formatTokens(usageSummary.session?.total_tokens ?? 0)} session / ${formatTokens(usageSummary.total.total_tokens)} total`
       : `tokens ${formatTokens(usageSummary.total.total_tokens)} total`
     : "tokens ...";
-  const isRapidFundamentalsMode =
-    (session?.mode ?? mode) === "rapid_fundamentals";
+  const isRapidFundamentalsMode = ["rapid_fundamentals", "betterstack_peterheinz"].includes(
+    session?.mode ?? mode,
+  );
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -1239,6 +1233,7 @@ export function App() {
               difficulty: item.difficulty,
               expected_answer_shape: item.rubric.must_have,
               rubric: item.rubric,
+              examples: item.examples,
             });
             setDrillCount(sum.drills_attempted);
             return;
@@ -1334,6 +1329,7 @@ export function App() {
             nice_to_have: [],
             red_flags: [],
           },
+          examples: examplesFromUnknown(result.examples),
         };
         pushedVoiceDrillRef.current = driven.attempt_id;
         setDrill(driven);
@@ -1343,7 +1339,7 @@ export function App() {
       }
       if (call.name === "grade_attempt" && !result.error) {
         const cardsOut = Array.isArray(result.cards)
-          ? (result.cards as { front: string; back: string }[])
+          ? (result.cards as GeneratedCardPayload[])
           : [];
         setGrade({
           attempt_id: String(result.attempt_id ?? ""),
@@ -1355,6 +1351,7 @@ export function App() {
             ? (result.missed_points as string[])
             : [],
           ideal_short_answer: String(result.ideal_short_answer ?? ""),
+          examples: examplesFromUnknown(result.examples),
           cards: cardsOut,
           breakdown: {
             must_have_coverage: 0,
@@ -1539,13 +1536,16 @@ export function App() {
         ...drill.rubric.must_have,
         ...drill.rubric.nice_to_have,
         ...drill.rubric.red_flags,
+        ...flattenExampleText(drill.examples),
       );
     }
     if (grade) {
       chunks.push(
         ...grade.missed_points,
         grade.ideal_short_answer,
+        ...flattenExampleText(grade.examples),
         ...grade.cards.flatMap((card) => [card.front, card.back]),
+        ...grade.cards.flatMap((card) => flattenExampleText(card.examples)),
       );
     }
     return collectConceptIds(chunks);
@@ -1811,9 +1811,27 @@ export function App() {
           ideal_answer: r.attempt.ideal_answer,
         },
         drill: r.drill ? { question_text: r.drill.question_text } : null,
+        evaluations: r.evaluations ?? [],
       });
     } catch (e) {
       setError((e as Error).message);
+    }
+  }, []);
+
+  const onEvaluateAttempt = useCallback(async (attemptId: string) => {
+    setError(null);
+    setEvaluatingAttemptId(attemptId);
+    try {
+      const r = await api.evaluateAttempt(attemptId);
+      setAttemptDetail((current) =>
+        current?.attempt.id === attemptId
+          ? { ...current, evaluations: r.evaluations }
+          : current,
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setEvaluatingAttemptId(null);
     }
   }, []);
 
@@ -1933,6 +1951,7 @@ export function App() {
       id: string;
       canonical_short_answer: string;
       difficulty: number;
+      examples: PracticalExample[];
       rubric: { must_have: string[]; nice_to_have: string[]; red_flags: string[] };
     }) => {
       setEditingDrill(d.id);
@@ -1941,6 +1960,7 @@ export function App() {
         nice_to_have: d.rubric.nice_to_have.join("\n"),
         red_flags: d.rubric.red_flags.join("\n"),
         canonical_short_answer: d.canonical_short_answer,
+        examples: formatExamplesForEdit(d.examples),
         difficulty: d.difficulty,
       });
     },
@@ -1964,6 +1984,7 @@ export function App() {
         await api.patchDrill(id, {
           canonical_short_answer: editForm.canonical_short_answer,
           difficulty: editForm.difficulty,
+          examples: parseExamplesFromEdit(editForm.examples),
           rubric: {
             must_have: splitLines(editForm.must_have),
             nice_to_have: splitLines(editForm.nice_to_have),
@@ -2791,6 +2812,11 @@ export function App() {
                 onSelectConcept={selectConcept}
               />
             </p>
+            <PracticalExamples
+              examples={grade.examples}
+              allowedConceptIds={currentConceptIds}
+              onSelectConcept={selectConcept}
+            />
 
             {grade.cards.length > 0 && (
               <>
@@ -2813,6 +2839,12 @@ export function App() {
                         onSelectConcept={selectConcept}
                       />
                     </div>
+                    <PracticalExamples
+                      examples={c.examples}
+                      allowedConceptIds={currentConceptIds}
+                      onSelectConcept={selectConcept}
+                      compact
+                    />
                   </div>
                 ))}
               </>
@@ -2954,6 +2986,89 @@ export function App() {
                           <div>
                             <span className="muted">ideal: </span>
                             {attemptDetail.attempt.ideal_answer}
+                          </div>
+                        )}
+                        <div
+                          className="row"
+                          style={{ gap: "0.35rem", alignItems: "center" }}
+                        >
+                          <button
+                            data-testid="shadow-evaluate-attempt"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void onEvaluateAttempt(attemptDetail.attempt.id);
+                            }}
+                            disabled={
+                              evaluatingAttemptId === attemptDetail.attempt.id
+                            }
+                            style={{ fontSize: "0.75rem", padding: "0.2rem 0.5rem" }}
+                          >
+                            {evaluatingAttemptId === attemptDetail.attempt.id
+                              ? "Evaluating…"
+                              : "Shadow eval"}
+                          </button>
+                          {attemptDetail.evaluations.length > 0 && (
+                            <span className="muted">
+                              {attemptDetail.evaluations.length} model checks
+                            </span>
+                          )}
+                        </div>
+                        {attemptDetail.evaluations.length > 0 && (
+                          <div
+                            data-testid="shadow-evaluations"
+                            style={{
+                              display: "grid",
+                              gap: "0.25rem",
+                              borderTop: "1px solid var(--border)",
+                              paddingTop: "0.35rem",
+                            }}
+                          >
+                            {attemptDetail.evaluations.map((ev) => (
+                              <div
+                                key={`${ev.model}-${ev.prompt_hash}`}
+                                style={{
+                                  display: "grid",
+                                  gridTemplateColumns: "minmax(120px, 1fr) auto",
+                                  gap: "0.4rem",
+                                  alignItems: "start",
+                                }}
+                              >
+                                <span className="muted">
+                                  {ev.model}
+                                  {ev.cached ? " · cached" : ""}
+                                  {ev.latency_ms !== null
+                                    ? ` · ${ev.latency_ms}ms`
+                                    : ""}
+                                </span>
+                                {ev.error ? (
+                                  <span className="tag verdict-fail">error</span>
+                                ) : (
+                                  <span className={`tag verdict-${ev.verdict ?? ""}`}>
+                                    {ev.score !== null
+                                      ? formatRapidScore(ev.score)
+                                      : "—"}{" "}
+                                    · {ev.verdict ?? "unknown"}
+                                  </span>
+                                )}
+                                {ev.error && (
+                                  <span
+                                    className="muted"
+                                    style={{ gridColumn: "1 / -1" }}
+                                  >
+                                    {ev.error}
+                                  </span>
+                                )}
+                                {!ev.error &&
+                                  (ev.missed_points ?? []).length > 0 && (
+                                    <span
+                                      className="muted"
+                                      style={{ gridColumn: "1 / -1" }}
+                                    >
+                                      missed: {(ev.missed_points ?? []).join(" · ")}
+                                    </span>
+                                  )}
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>
@@ -3307,6 +3422,22 @@ export function App() {
                               style={editorTextareaStyle}
                             />
                           </label>
+                          <label style={{ display: "grid", gap: "0.2rem" }}>
+                            <span style={{ fontSize: "0.75rem" }}>
+                              Examples (use case | why | gotcha)
+                            </span>
+                            <textarea
+                              rows={4}
+                              value={editForm.examples}
+                              onChange={(e) =>
+                                setEditForm((p) => ({
+                                  ...p,
+                                  examples: e.target.value,
+                                }))
+                              }
+                              style={editorTextareaStyle}
+                            />
+                          </label>
                           <label style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
                             <span style={{ fontSize: "0.75rem" }}>Difficulty</span>
                             <select
@@ -3355,6 +3486,12 @@ export function App() {
                           {d.rubric.red_flags.join(" · ") || "—"}
                           <br />
                           <strong>ideal:</strong> {d.canonical_short_answer}
+                          <PracticalExamples
+                            examples={d.examples}
+                            allowedConceptIds={currentConceptIds}
+                            onSelectConcept={selectConcept}
+                            compact
+                          />
                           <div style={{ marginTop: "0.3rem" }}>
                             <button
                               data-testid="edit-rubric"
@@ -3697,9 +3834,17 @@ export function App() {
               <div className="card" key={c.id} data-testid="card">
                 <div className="front">{c.front}</div>
                 {revealed[c.id] ? (
-                  <div className="back" style={{ marginTop: "0.4rem" }}>
-                    {c.back}
-                  </div>
+                  <>
+                    <div className="back" style={{ marginTop: "0.4rem" }}>
+                      {c.back}
+                    </div>
+                    <PracticalExamples
+                      examples={c.examples}
+                      allowedConceptIds={currentConceptIds}
+                      onSelectConcept={selectConcept}
+                      compact
+                    />
+                  </>
                 ) : null}
                 <div className="row" style={{ marginTop: "0.5rem", gap: "0.4rem" }}>
                   {!revealed[c.id] ? (
@@ -3740,6 +3885,136 @@ export function App() {
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+function flattenExampleText(examples?: PracticalExample[]): string[] {
+  return (examples ?? []).flatMap((e) => [
+    e.use_case,
+    e.why_it_fits,
+    e.gotcha,
+  ]);
+}
+
+function examplesFromUnknown(value: unknown): PracticalExample[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const raw = item as Record<string, unknown>;
+      const use_case = String(raw.use_case ?? "").trim();
+      const why_it_fits = String(raw.why_it_fits ?? "").trim();
+      const gotcha = String(raw.gotcha ?? "").trim();
+      if (!use_case || !why_it_fits || !gotcha) return null;
+      return { use_case, why_it_fits, gotcha };
+    })
+    .filter((item): item is PracticalExample => item !== null);
+}
+
+function formatExamplesForEdit(examples: PracticalExample[] = []): string {
+  return examples
+    .map((e) => `${e.use_case} | ${e.why_it_fits} | ${e.gotcha}`)
+    .join("\n");
+}
+
+function parseExamplesFromEdit(text: string): PracticalExample[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith("[")) {
+    const parsed = JSON.parse(trimmed) as unknown;
+    const examples = examplesFromUnknown(parsed);
+    if (examples.length === 0 && Array.isArray(parsed) && parsed.length > 0) {
+      throw new Error("Examples JSON must use use_case, why_it_fits, and gotcha.");
+    }
+    return examples;
+  }
+  return trimmed.split("\n").map((line, index) => {
+    const parts = line.split("|").map((part) => part.trim());
+    if (parts.length < 3 || parts.slice(0, 3).some((part) => !part)) {
+      throw new Error(
+        `Example row ${index + 1} must be: use case | why | gotcha`,
+      );
+    }
+    return {
+      use_case: parts[0]!,
+      why_it_fits: parts[1]!,
+      gotcha: parts.slice(2).join(" | "),
+    };
+  });
+}
+
+function PracticalExamples({
+  examples,
+  allowedConceptIds,
+  onSelectConcept,
+  compact = false,
+}: {
+  examples?: PracticalExample[];
+  allowedConceptIds: string[];
+  onSelectConcept: (id: string) => void;
+  compact?: boolean;
+}) {
+  if (!examples || examples.length === 0) return null;
+  return (
+    <div
+      data-testid="practical-examples"
+      style={{
+        marginTop: compact ? "0.45rem" : "0.7rem",
+        display: "grid",
+        gap: "0.35rem",
+      }}
+    >
+      {!compact && (
+        <h3 style={{ margin: 0, fontSize: "0.95rem" }}>
+          Practical examples
+        </h3>
+      )}
+      {examples.map((example, index) => (
+        <div
+          key={`${example.use_case}-${index}`}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+            gap: "0.45rem",
+            padding: "0.45rem 0",
+            borderTop: "1px solid var(--border)",
+            fontSize: compact ? "0.78rem" : "0.82rem",
+            lineHeight: 1.35,
+          }}
+        >
+          <div>
+            <div className="muted" style={{ fontSize: "0.68rem" }}>
+              use case
+            </div>
+            <TermText
+              text={example.use_case}
+              allowedConceptIds={allowedConceptIds}
+              onSelectConcept={onSelectConcept}
+            />
+          </div>
+          <div>
+            <div className="muted" style={{ fontSize: "0.68rem" }}>
+              why
+            </div>
+            <TermText
+              text={example.why_it_fits}
+              allowedConceptIds={allowedConceptIds}
+              onSelectConcept={onSelectConcept}
+            />
+          </div>
+          <div>
+            <div className="muted" style={{ fontSize: "0.68rem" }}>
+              gotcha
+            </div>
+            <TermText
+              text={example.gotcha}
+              allowedConceptIds={allowedConceptIds}
+              onSelectConcept={onSelectConcept}
+            />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

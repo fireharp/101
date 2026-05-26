@@ -29,6 +29,13 @@ const validDrill = {
   rubric: { must_have: ["alpha"], nice_to_have: [], red_flags: [] },
   canonical_short_answer: "Alpha is the canonical short answer here.",
   canonical_deep_answer: null,
+  examples: [
+    {
+      use_case: "Seed import smoke test",
+      why_it_fits: "The imported row should preserve structured example data.",
+      gotcha: "Missing examples must still default to an empty array.",
+    },
+  ],
   tags: ["unit-test"],
   is_active: true,
 };
@@ -64,6 +71,7 @@ test("importDrillsFromYaml: single object (not an array) is wrapped and imported
   const persisted = drills.get(validDrill.id);
   assert.ok(persisted, "single-object import should persist via upsert");
   assert.equal(persisted.canonical_short_answer, validDrill.canonical_short_answer);
+  assert.deepEqual(persisted.examples, validDrill.examples);
 });
 
 test("importDrillsFromYaml: mixed valid + invalid items returns partial success with ok:false", () => {
@@ -102,4 +110,14 @@ test("importDrillsFromYaml: is_active defaults to true when omitted", () => {
   const persisted = drills.get("seed_unit_003");
   assert.ok(persisted);
   assert.equal(persisted.is_active, true);
+});
+
+test("importDrillsFromYaml: examples default to [] when omitted", () => {
+  const noExamples = { ...validDrill, id: "seed_unit_004" };
+  delete (noExamples as { examples?: unknown }).examples;
+  const result = importDrillsFromYaml(toYaml([noExamples]));
+  assert.equal(result.ok, true);
+  const persisted = drills.get("seed_unit_004");
+  assert.ok(persisted);
+  assert.deepEqual(persisted.examples, []);
 });

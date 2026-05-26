@@ -35,6 +35,10 @@
     consumer, and start a child span linked to the same trace id. The same
     pattern fixes background jobs, queues, and cross-process boundaries.
   canonical_deep_answer: null
+  examples:
+    - use_case: "HTTP order request publishes a fulfillment job to a queue."
+      why_it_fits: "Putting traceparent in the job envelope links worker spans to the request trace."
+      gotcha: "Starting a fresh trace in the worker hides the real upstream cause."
   tags: [tracing, opentelemetry, observability]
   is_active: true
 
@@ -75,5 +79,9 @@
     them and on-call can filter by user_id without regex gymnastics. Bonus:
     correlate with traces via trace_id.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Support asks for all payment errors for one user in the last hour."
+      why_it_fits: "Structured user_id, severity, and trace_id fields make the query direct."
+      gotcha: "Avoid logging secrets or unbounded high-cardinality payloads."
   tags: [logging, observability]
   is_active: true

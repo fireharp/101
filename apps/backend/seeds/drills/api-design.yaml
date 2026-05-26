@@ -35,6 +35,10 @@
     key, return the stored response. Scope keys per actor and endpoint and
     expire them after a sensible window.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Client retries POST /payments after a timeout."
+      why_it_fits: "The same key returns the original charge result instead of creating a second charge."
+      gotcha: "Scope keys by actor and endpoint, and reject mismatched replay bodies."
   tags: [api, idempotency, http]
   is_active: true
 
@@ -75,5 +79,9 @@
     shows old clients are gone. If the semantics truly change, version the
     endpoint and let clients opt in.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Renaming total_price to total_amount for slow-updating mobile clients."
+      why_it_fits: "Dual fields let old clients keep working while new clients migrate."
+      gotcha: "Changing meaning under the old field name silently breaks clients."
   tags: [api, versioning, rollout]
   is_active: true

@@ -18,6 +18,10 @@
     parameters or prepared statements, never string interpolation for values;
     allowlist dynamic identifiers and keep DB privileges narrow.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Email lookup in a login form"
+      why_it_fits: "The attacker-controlled email can change the SQL WHERE clause."
+      gotcha: "Manual escaping misses edge cases; bind values instead."
   tags: [rapid_fundamentals, betterstack, security, sql]
   is_active: true
 
@@ -42,6 +46,10 @@
     client-side APIs; prevent it with context-aware escaping, sanitization for
     allowed HTML, and CSP as defense in depth.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Rendering user comments"
+      why_it_fits: "Stored content, reflected query text, or DOM APIs can execute script."
+      gotcha: "Framework escaping fails when using unsafe HTML sinks."
   tags: [rapid_fundamentals, betterstack, security, frontend]
   is_active: true
 
@@ -65,6 +73,10 @@
     JavaScript inside your origin. CSRF defenses include SameSite cookies, tokens,
     and origin checks, but XSS can often bypass them because it executes as the site.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Logged-in account email change"
+      why_it_fits: "CSRF submits the request with cookies; XSS runs code on the site."
+      gotcha: "CORS does not stop a browser from sending a form POST."
   tags: [rapid_fundamentals, betterstack, security, web]
   is_active: true
 
@@ -89,6 +101,10 @@
     should be HttpOnly and Secure, with SameSite chosen based on whether cross-site
     flows are required.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Session cookie for a dashboard"
+      why_it_fits: "HttpOnly, Secure, and SameSite each protect a different path."
+      gotcha: "SameSite=None requires Secure and still needs authorization checks."
   tags: [rapid_fundamentals, betterstack, security, web]
   is_active: true
 
@@ -112,6 +128,10 @@
     HttpOnly cookie protects the token from JavaScript but must be paired with
     CSRF defenses and server-side authorization checks.
   canonical_deep_answer: null
+  examples:
+    - use_case: "SPA storing an access token"
+      why_it_fits: "LocalStorage is easy to read after XSS; HttpOnly cookies are not."
+      gotcha: "Cookie auth shifts work to CSRF and same-origin defenses."
   tags: [rapid_fundamentals, betterstack, security, auth]
   is_active: true
 
@@ -135,6 +155,10 @@
     responses; it is not authentication. A dangerous setup reflects arbitrary
     origins while allowing credentials, so use explicit allowlists.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Frontend app calling an API origin"
+      why_it_fits: "CORS decides whether browser JS can read the cross-origin response."
+      gotcha: "Reflecting any Origin with credentials leaks authenticated data."
   tags: [rapid_fundamentals, betterstack, security, browser]
   is_active: true
 
@@ -158,6 +182,10 @@
     to hit internal metadata or admin services. Use allowlists, resolve and block
     private IP ranges, revalidate redirects, and add egress controls.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Server-side URL preview fetcher"
+      why_it_fits: "An attacker URL could target metadata or internal admin hosts."
+      gotcha: "Validate resolved IPs and redirects, not just the URL string."
   tags: [rapid_fundamentals, betterstack, security, networking]
   is_active: true
 
@@ -181,6 +209,10 @@
     executable paths or in object storage, and check authorization on every read.
     For example, re-encode uploaded images and scan high-risk files.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Profile image upload"
+      why_it_fits: "Size, content validation, storage path, and read auth all matter."
+      gotcha: "The Content-Type header can be attacker supplied."
   tags: [rapid_fundamentals, betterstack, security, files]
   is_active: true
 
@@ -204,6 +236,10 @@
     tenant's data. The server must check the current user's membership and role
     for that tenant on every access, with tests for cross-tenant denial.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Project document download"
+      why_it_fits: "Changing project_id can expose another tenant without server checks."
+      gotcha: "Hiding the button in the UI is not authorization."
   tags: [rapid_fundamentals, betterstack, security, auth]
   is_active: true
 
@@ -227,6 +263,10 @@
     and process each event id idempotently in a durable transaction. For example,
     a duplicate payment webhook should return the recorded result, not charge again.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Payment provider webhook"
+      why_it_fits: "Retries and attackers can deliver the same event more than once."
+      gotcha: "HTTPS alone does not authenticate the provider or prevent replay."
   tags: [rapid_fundamentals, betterstack, security, webhooks]
   is_active: true
 
@@ -239,17 +279,23 @@
     What is the difference between EXPLAIN and EXPLAIN ANALYZE in Postgres?
   expected_answer:
     must_have: [EXPLAIN shows estimated plan, EXPLAIN ANALYZE executes query, actual timing and row counts]
-    nice_to_have: [wrap writes in transaction and rollback or avoid production writes]
+    nice_to_have: [plain EXPLAIN still considers indexes, add BUFFERS for real tuning, wrap writes in transaction and rollback or avoid production writes]
     red_flags: [ANALYZE never runs the query]
   rubric:
     must_have: [EXPLAIN shows estimated plan, EXPLAIN ANALYZE executes query, actual timing and row counts]
-    nice_to_have: [wrap writes in transaction and rollback or avoid production writes]
+    nice_to_have: [plain EXPLAIN still considers indexes, add BUFFERS for real tuning, wrap writes in transaction and rollback or avoid production writes]
     red_flags: [ANALYZE never runs the query]
   canonical_short_answer: >
-    EXPLAIN shows the planner's estimated plan; EXPLAIN ANALYZE actually runs
-    the statement and returns real timing and row counts. For writes, use a
-    rollback transaction or avoid running it directly on production data.
+    EXPLAIN shows the planner's estimated plan and can show intended index,
+    bitmap, or sequential scans, but it is still only a prediction. EXPLAIN
+    ANALYZE actually runs the statement and returns real timing and row counts;
+    add BUFFERS when tuning I/O. For writes, use a rollback transaction or avoid
+    running it directly on production data.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Tuning a slow SELECT"
+      why_it_fits: "EXPLAIN estimates the path; ANALYZE confirms actual rows and time."
+      gotcha: "EXPLAIN ANALYZE runs the statement, so treat writes carefully."
   tags: [rapid_fundamentals, betterstack, database, postgres]
   is_active: true
 
@@ -262,17 +308,23 @@
     What does VACUUM do, and why is VACUUM FULL a different operational choice?
   expected_answer:
     must_have: [VACUUM cleans dead tuples, supports MVCC reuse, VACUUM FULL rewrites table]
-    nice_to_have: [VACUUM FULL takes heavy lock and returns space to OS]
+    nice_to_have: [autovacuum runs vacuum and analyze, normal vacuum usually does not shrink files, wraparound protection]
     red_flags: [VACUUM FULL is always safe online]
   rubric:
     must_have: [VACUUM cleans dead tuples, supports MVCC reuse, VACUUM FULL rewrites table]
-    nice_to_have: [VACUUM FULL takes heavy lock and returns space to OS]
+    nice_to_have: [autovacuum runs vacuum and analyze, normal vacuum usually does not shrink files, wraparound protection]
     red_flags: [VACUUM FULL is always safe online]
   canonical_short_answer: >
     Normal VACUUM cleans dead tuples so Postgres can reuse space and maintain
-    MVCC health. VACUUM FULL rewrites the table, can return disk to the OS, and
-    is much more disruptive because it takes a heavy lock.
+    MVCC health; it usually does not shrink files on disk. Autovacuum performs
+    this maintenance automatically and also helps with ANALYZE and transaction
+    ID wraparound protection. VACUUM FULL rewrites the table, can return disk to
+    the OS, and is much more disruptive because it takes a heavy lock.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Heavily updated events table"
+      why_it_fits: "Normal VACUUM reclaims dead tuples for reuse without rewriting."
+      gotcha: "VACUUM FULL takes a heavy lock and is an operational event."
   tags: [rapid_fundamentals, betterstack, database, postgres]
   is_active: true
 
@@ -296,6 +348,10 @@
     narrows to one category, then the index already yields rows in price order,
     so LIMIT 20 can stop early; add a partial predicate if all queries require active rows.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Marketplace category page sorted by price"
+      why_it_fits: "The index narrows by category and returns rows in price order."
+      gotcha: "An index on price alone still scans unrelated categories."
   tags: [rapid_fundamentals, betterstack, database, indexing]
   is_active: true
 
@@ -319,6 +375,10 @@
     equality columns based on selectivity. Equality columns come first, then the
     ordered timestamp lets Postgres avoid an extra sort.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Seller orders filtered by status"
+      why_it_fits: "Equality columns narrow the set before reading newest updates."
+      gotcha: "Separate indexes often still require filtering or sorting."
   tags: [rapid_fundamentals, betterstack, database, indexing]
   is_active: true
 
@@ -342,6 +402,10 @@
     low selectivity, stats are stale, or the query uses a cast/function that does
     not match the index. Check EXPLAIN ANALYZE with buffers before changing indexes.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Case-insensitive email search"
+      why_it_fits: "lower(email) will not use a plain email index unless indexed that way."
+      gotcha: "Forcing index use can hide stale stats or low selectivity."
   tags: [rapid_fundamentals, betterstack, database, postgres]
   is_active: true
 
@@ -365,6 +429,10 @@
     non-key columns, so Postgres may perform an index-only scan. The caveat is
     write/storage cost and visibility-map requirements.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Orders list showing status and total"
+      why_it_fits: "INCLUDE columns can satisfy the projection from the index."
+      gotcha: "Index-only scans still depend on visibility map state."
   tags: [rapid_fundamentals, betterstack, database, indexing]
   is_active: true
 
@@ -388,6 +456,10 @@
     and faster for matching queries. For example, index active products with
     WHERE active = true if every relevant query includes that predicate.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Catalog queries for active products"
+      why_it_fits: "The index stays small because inactive rows are excluded."
+      gotcha: "Queries must include the matching predicate to benefit."
   tags: [rapid_fundamentals, betterstack, database, indexing]
   is_active: true
 
@@ -411,6 +483,10 @@
     than one: SELECT email, count(*) FROM users GROUP BY email HAVING count(*) > 1.
     Add WHERE email IS NOT NULL if nulls should be ignored.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Cleaning imported user emails"
+      why_it_fits: "GROUP BY plus HAVING exposes keys appearing more than once."
+      gotcha: "DISTINCT removes duplicates instead of identifying them."
   tags: [rapid_fundamentals, betterstack, database, sql]
   is_active: true
 
@@ -434,6 +510,10 @@
     or use row_number over partition by user_id. For example, an index on
     (user_id, created_at DESC) matches that access pattern.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Latest login event per user"
+      why_it_fits: "DISTINCT ON or row_number keeps the full row for the newest event."
+      gotcha: "GROUP BY user_id cannot safely select arbitrary event columns."
   tags: [rapid_fundamentals, betterstack, database, sql]
   is_active: true
 
@@ -457,6 +537,10 @@
     stable snapshot; serializable gives stronger anomaly protection by aborting
     conflicting transactions. The application must handle retries.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Inventory reservation transaction"
+      why_it_fits: "Serializable can prevent anomalies by aborting conflicting writes."
+      gotcha: "Stronger isolation still requires application retry logic."
   tags: [rapid_fundamentals, betterstack, database, transactions]
   is_active: true
 
@@ -480,6 +564,10 @@
     transactions short. Still expect occasional deadlock errors under concurrency,
     so retry safe transactions and watch lock-wait metrics.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Money transfer between two accounts"
+      why_it_fits: "Locking accounts in a stable order reduces circular waits."
+      gotcha: "Retries must be safe and transactions should stay short."
   tags: [rapid_fundamentals, betterstack, database, transactions]
   is_active: true
 
@@ -503,6 +591,10 @@
     constraint, and perform the side effect/state transition in a transaction.
     A retry should read the recorded result instead of repeating the charge.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Duplicate payment callback"
+      why_it_fits: "A unique event id lets the transaction record one side effect."
+      gotcha: "An in-memory processed list disappears on restart."
   tags: [rapid_fundamentals, betterstack, database, reliability]
   is_active: true
 
@@ -526,6 +618,10 @@
     Repaint redraws pixels after visual changes. For example, animating transform
     is usually cheaper than repeatedly changing layout-affecting widths.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Animating a sidebar"
+      why_it_fits: "Width changes trigger layout; transform changes can stay cheaper."
+      gotcha: "A color change repaints but usually does not reflow."
   tags: [rapid_fundamentals, betterstack, frontend, browser]
   is_active: true
 
@@ -538,17 +634,23 @@
     Define layout thrashing and the practical fix.
   expected_answer:
     must_have: [alternating DOM writes and layout reads, forces repeated layout, batch reads then writes]
-    nice_to_have: [requestAnimationFrame or transform opacity]
-    red_flags: [add more debouncing only]
+    nice_to_have: [requestAnimationFrame or transform opacity, React render count is separate from browser layout passes]
+    red_flags: [add more debouncing only, memoization automatically fixes layout thrashing]
   rubric:
     must_have: [alternating DOM writes and layout reads, forces repeated layout, batch reads then writes]
-    nice_to_have: [requestAnimationFrame or transform opacity]
-    red_flags: [add more debouncing only]
+    nice_to_have: [requestAnimationFrame or transform opacity, React render count is separate from browser layout passes]
+    red_flags: [add more debouncing only, memoization automatically fixes layout thrashing]
   canonical_short_answer: >
     Layout thrashing is alternating DOM writes with reads like offsetHeight,
     forcing the browser to recalculate layout repeatedly. Batch reads before
     writes, use requestAnimationFrame, and prefer transform/opacity for animations.
+    React memoization may reduce component rerenders, but it does not by itself
+    prevent forced browser layout work.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Measuring rows while resizing a grid"
+      why_it_fits: "Interleaved writes and offsetHeight reads force repeated layout."
+      gotcha: "React memoization does not remove browser layout reads."
   tags: [rapid_fundamentals, betterstack, frontend, performance]
   is_active: true
 
@@ -572,6 +674,10 @@
     shifts, and INP measures interaction responsiveness. For example, optimize
     the hero image, reserve image dimensions, and reduce long main-thread tasks.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Dashboard loading a large chart"
+      why_it_fits: "Hero data affects LCP, reserved space affects CLS, JS affects INP."
+      gotcha: "A Lighthouse score alone does not explain field-user pain."
   tags: [rapid_fundamentals, betterstack, frontend, performance]
   is_active: true
 
@@ -595,6 +701,10 @@
     macrotask like a timer. A long JavaScript task blocks rendering and input,
     so split heavy work or yield back to the browser.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Parsing a large CSV in the browser"
+      why_it_fits: "Long synchronous JavaScript blocks rendering and input."
+      gotcha: "A chain of microtasks can still starve the UI."
   tags: [rapid_fundamentals, betterstack, frontend, javascript]
   is_active: true
 
@@ -618,6 +728,10 @@
     Throttle limits a handler to a maximum rate, which fits scroll or resize;
     requestAnimationFrame is often useful for visual updates.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Autocomplete input versus scroll handler"
+      why_it_fits: "Search should wait for quiet; scroll should update at a capped rate."
+      gotcha: "Using throttle for search can send stale intermediate queries."
   tags: [rapid_fundamentals, betterstack, frontend, javascript]
   is_active: true
 
@@ -641,6 +755,10 @@
     of DOM nodes. For example, use it for large log tables, while handling row
     heights, focus, and accessibility carefully.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Log viewer with 50,000 rows"
+      why_it_fits: "Rendering only visible rows keeps DOM size manageable."
+      gotcha: "Dynamic row heights and keyboard focus need deliberate handling."
   tags: [rapid_fundamentals, betterstack, frontend, performance]
   is_active: true
 
@@ -664,6 +782,10 @@
     components, memoized or computed expensive values, and virtual lists for large
     data. For example, do not memoize everything before finding the hot path.
   canonical_deep_answer: null
+  examples:
+    - use_case: "React table with expensive filters"
+      why_it_fits: "Profiling identifies the hot component before memoizing or virtualizing."
+      gotcha: "Memoizing everything adds complexity and can miss the real bottleneck."
   tags: [rapid_fundamentals, betterstack, frontend, performance]
   is_active: true
 
@@ -687,6 +809,10 @@
     layout so the page feels stable. For example, stream or progressively render
     real content rather than hiding all latency behind a spinner.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Slow incident detail page"
+      why_it_fits: "Streaming useful content and reserving layout improves perceived speed."
+      gotcha: "A spinner can hide latency without making the workflow feel faster."
   tags: [rapid_fundamentals, betterstack, frontend, performance]
   is_active: true
 
@@ -710,6 +836,10 @@
     + digit value. Clarify whether A maps to 1 like Excel or 0 in a custom spec;
     for example, AA is 1 * 26 + 1 in Excel-style numbering.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Parsing Excel import columns"
+      why_it_fits: "The label AA requires repeated multiply-and-add conversion."
+      gotcha: "A equals one in Excel-style numbering, not zero."
   tags: [rapid_fundamentals, betterstack, javascript, coding]
   is_active: true
 
@@ -733,6 +863,10 @@
     to Number.MAX_SAFE_INTEGER. Use BigInt or string/domain-specific math for
     exact large values, while handling JSON and mixed-type caveats.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Handling external 64-bit order ids"
+      why_it_fits: "Ids above MAX_SAFE_INTEGER can lose precision as Number."
+      gotcha: "BigInt has JSON and mixed-operation caveats."
   tags: [rapid_fundamentals, betterstack, javascript, numbers]
   is_active: true
 
@@ -756,6 +890,10 @@
     Infinity, and values outside the allowed range. For example, parse an integer
     with a regex plus Number.isSafeInteger when exact integer math matters.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Parsing a quantity input"
+      why_it_fits: "The app needs integer format, finite value, and allowed range checks."
+      gotcha: "Implicit coercion can turn empty strings into surprising values."
   tags: [rapid_fundamentals, betterstack, javascript, parsing]
   is_active: true
 
@@ -779,6 +917,10 @@
     clear the old timeout and schedule a new one; for example, a search handler
     fires only after the user stops typing for 300 ms.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Autocomplete API call"
+      why_it_fits: "A closure-held timer delays the request until typing pauses."
+      gotcha: "Preserve arguments and this if wrapping object methods."
   tags: [rapid_fundamentals, betterstack, javascript, coding]
   is_active: true
 
@@ -802,6 +944,10 @@
     For example, Map is safer when keys are not simple trusted strings because
     it avoids object prototype issues.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Counting tags in search results"
+      why_it_fits: "A Map updates counts in one pass with explicit key handling."
+      gotcha: "Plain objects can collide with prototype names if used carelessly."
   tags: [rapid_fundamentals, betterstack, javascript, coding]
   is_active: true
 
@@ -825,6 +971,10 @@
     characters, so emoji and combining marks can break. For example, use
     grapheme-aware handling when correctness matters beyond ASCII.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Reversing display names with emoji"
+      why_it_fits: "User-perceived characters may span multiple UTF-16 code units."
+      gotcha: "split('') can break emoji and combining marks."
   tags: [rapid_fundamentals, betterstack, javascript, strings]
   is_active: true
 
@@ -848,6 +998,10 @@
     lexicographically unless you pass (a, b) => a - b. For example, also remember
     sort mutates the array and the comparator must be consistent.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Sorting product prices"
+      why_it_fits: "The numeric comparator orders 2 before 10."
+      gotcha: "sort mutates the array and default sort is lexicographic."
   tags: [rapid_fundamentals, betterstack, javascript, sorting]
   is_active: true
 
@@ -871,6 +1025,10 @@
     to find big directories and files. For example, use find with a size filter
     before deleting anything.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Production disk nearly full"
+      why_it_fits: "df locates the filesystem; du and find locate the biggest paths."
+      gotcha: "Do not delete files before identifying ownership and impact."
   tags: [rapid_fundamentals, betterstack, unix, ops]
   is_active: true
 
@@ -894,6 +1052,10 @@
     to count patterns. For example, grep ERROR app.log | wc -l gives a quick
     count before deeper inspection with less.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Counting 500 errors in app logs"
+      why_it_fits: "grep finds the pattern and wc or awk gives a quick count."
+      gotcha: "Opening huge logs in an editor can hang your session."
   tags: [rapid_fundamentals, betterstack, unix, logs]
   is_active: true
 
@@ -917,6 +1079,10 @@
     then send a deliberate signal. For example, try a normal kill before reaching
     for kill -9.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Local dev server port conflict"
+      why_it_fits: "lsof or ss identifies the listener before you terminate it."
+      gotcha: "Inspect the process before using kill, especially kill -9."
   tags: [rapid_fundamentals, betterstack, unix, ops]
   is_active: true
 
@@ -940,6 +1106,10 @@
     connectivity. For example, ping only tells you ICMP reachability, not whether
     TLS or the HTTP service works.
   canonical_deep_answer: null
+  examples:
+    - use_case: "API URL failing from a server"
+      why_it_fits: "dig checks DNS, nc checks the port, and curl checks HTTP/TLS."
+      gotcha: "Ping does not prove the web service is reachable."
   tags: [rapid_fundamentals, betterstack, unix, networking]
   is_active: true
 
@@ -963,6 +1133,10 @@
     spaces safely. For example, find ... -print0 | xargs -0 ... and preview
     before any destructive operation.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Bulk formatting matched files"
+      why_it_fits: "find plus xargs safely applies a command to selected paths."
+      gotcha: "Use -print0 and preview before destructive operations."
   tags: [rapid_fundamentals, betterstack, unix, shell]
   is_active: true
 
@@ -986,6 +1160,10 @@
     for the job it promises. For example, ship one finished workflow rather than
     five half-working MVP fragments.
   canonical_deep_answer: null
+  examples:
+    - use_case: "First version of onboarding"
+      why_it_fits: "One finished workflow can be simple, lovable, and complete."
+      gotcha: "A broken broad MVP does not create reliable learning."
   tags: [rapid_fundamentals, betterstack, product, fpe]
   is_active: true
 
@@ -1009,6 +1187,10 @@
     business constraints, and implementation cost well enough to remove the small
     requirement causing most of the complexity.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Removing a rare enterprise edge case"
+      why_it_fits: "Changing scope can remove disproportionate complexity."
+      gotcha: "Working faster alone is not the same as product leverage."
   tags: [rapid_fundamentals, betterstack, product, fpe]
   is_active: true
 
@@ -1032,6 +1214,10 @@
     In devtools, network effects are weaker than social apps, so examples are
     teammate invites, shared dashboards, public status pages, and integrations.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Shared observability dashboard"
+      why_it_fits: "Team invites and shared artifacts can create value before scale."
+      gotcha: "Not every developer tool has strong social network effects."
   tags: [rapid_fundamentals, betterstack, product, growth]
   is_active: true
 
@@ -1055,6 +1241,10 @@
     a bolted-on referral button. For example, public status pages, shared incident
     reports, uptime badges, or dashboards can distribute a devtool.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Public status page"
+      why_it_fits: "Normal product use creates an external artifact others see."
+      gotcha: "A referral button is distribution added on top, not built in."
   tags: [rapid_fundamentals, betterstack, product, growth]
   is_active: true
 
@@ -1078,6 +1268,10 @@
     reaching that meaningful state. For example, not signup, but a real monitor
     detecting an incident, routing it, and making the cause understandable.
   canonical_deep_answer: null
+  examples:
+    - use_case: "First useful alert from a monitor"
+      why_it_fits: "The user sees value when an issue is detected and explained."
+      gotcha: "Signup or installation alone is vanity activation."
   tags: [rapid_fundamentals, betterstack, product, growth]
   is_active: true
 
@@ -1101,6 +1295,10 @@
     team. For observability, page views would be weak; useful alerts resolved or
     teams with monitored services and lower MTTR are closer to value.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Observability team metric review"
+      why_it_fits: "Resolved actionable incidents ties measurement to customer value."
+      gotcha: "Page views can grow while product value does not."
   tags: [rapid_fundamentals, betterstack, product, metrics]
   is_active: true
 
@@ -1124,6 +1322,10 @@
     types, logs, traces, reviews, and threat models. For example, use an agent
     for scaffolding but inspect the diff and verify behavior yourself.
   canonical_deep_answer: null
+  examples:
+    - use_case: "AI-assisted database migration"
+      why_it_fits: "The model can draft, but tests and review establish correctness."
+      gotcha: "Shipping generated code unread is correctness theater."
   tags: [rapid_fundamentals, betterstack, product, ai]
   is_active: true
 
@@ -1147,5 +1349,9 @@
     value, then connect the result to their outcome. For example, demo detecting
     an incident, routing it, and understanding the cause instead of listing every tab.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Two-minute incident response demo"
+      why_it_fits: "One workflow connects the feature to the customer's outcome."
+      gotcha: "Listing every tab loses the pain-to-value story."
   tags: [rapid_fundamentals, betterstack, product, demo]
   is_active: true

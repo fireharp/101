@@ -70,6 +70,7 @@ export function documentsToDraftDrills(
       },
       canonical_short_answer: summarize(document.text),
       canonical_deep_answer: `Source: ${document.source_url}\n\n${document.text}`,
+      examples: [],
       tags: [
         "extracted",
         "source:github",

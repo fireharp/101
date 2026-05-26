@@ -37,6 +37,10 @@
     decrement-or-refill script. Decide what happens if Redis is unreachable:
     fail open or fail closed.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Public API limit of 100 requests per minute with short bursts"
+      why_it_fits: "The bucket allows a burst while refill enforces sustained throughput."
+      gotcha: "Local memory fails across nodes; Redis errors need a fail-open or fail-closed policy."
   tags: [rate_limiting, redis, scaling]
   is_active: true
 
@@ -78,6 +82,10 @@
     unique-constrained table, and make the charge API call use the same key.
     Retries become safe replays, not double charges.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Payment charge worker retrying queue messages"
+      why_it_fits: "A duplicate delivery must return the previous charge result instead of charging again."
+      gotcha: "The downstream payment provider must also receive the same idempotency key."
   tags: [queues, idempotency, payments]
   is_active: true
 
@@ -120,6 +128,10 @@
     write-through with a versioned key. Combine TTL plus invalidation in
     practice.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Product price cache in Redis"
+      why_it_fits: "A stale price can be repopulated by a racing reader after the DB write."
+      gotcha: "Deleting before the DB write can make a reader cache the old value again."
   tags: [caching, redis, consistency]
   is_active: true
 
@@ -162,6 +174,10 @@
     LSN and wait for the replica to catch up, or accept eventual consistency
     where business allows.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Profile settings saved then immediately reloaded"
+      why_it_fits: "The user expects read-after-write, but the replica may not have replayed the change."
+      gotcha: "Routing every read to primary removes lag but sacrifices read scaling."
   tags: [postgres, replication, scaling]
   is_active: true
 
@@ -203,6 +219,10 @@
     across N shards, while small tenants stay tenant-only. Migrate with
     dual-write and backfill, and watch rebalance cost.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Enterprise tenant writes 50x more events than other tenants"
+      why_it_fits: "Hashing only by tenant puts all of that tenant's writes on one shard."
+      gotcha: "Changing shard keys requires migration, backfill, and dual-read/write safety."
   tags: [sharding, scaling, postgres]
   is_active: true
 
@@ -245,5 +265,9 @@
     realistic guarantee. Set visibility timeout above the worst-case job
     runtime.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Image thumbnail generation after uploads"
+      why_it_fits: "Bursty slow jobs can be buffered and processed by autoscaled workers."
+      gotcha: "Workers can receive duplicates, so thumbnail writes must be idempotent."
   tags: [queues, async, scaling]
   is_active: true

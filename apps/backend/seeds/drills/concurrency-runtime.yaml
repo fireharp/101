@@ -36,6 +36,10 @@
     bound the pool, and add a queue with back-pressure so you fail fast
     instead of OOM-ing.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Sizing thumbnail rendering versus S3 metadata fetch workers."
+      why_it_fits: "Rendering is CPU-bound near core count; S3 waits justify more workers."
+      gotcha: "An unbounded pool or queue converts latency spikes into memory pressure."
   tags: [threads, performance]
   is_active: true
 
@@ -76,5 +80,9 @@
     to a worker thread or use the async bcrypt API. Same rule for big
     JSON.parse, sync fs calls, and any tight CPU loop.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Express login handler calls bcrypt.hashSync during traffic."
+      why_it_fits: "CPU-bound sync work blocks the event loop for unrelated requests."
+      gotcha: "Wrapping sync work in async/await does not make it non-blocking."
   tags: [node, async, performance]
   is_active: true

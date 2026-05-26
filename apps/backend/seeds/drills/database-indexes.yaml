@@ -46,6 +46,10 @@
     cardinality status with high-cardinality category_id, leading on
     category_id wins. A covering index that includes price avoids heap
     lookups but raises write and storage cost.
+  examples:
+    - use_case: "Category page sorted by cheapest active products."
+      why_it_fits: "The index can seek by category and return rows already ordered by price."
+      gotcha: "A partial active index only helps queries that include the active predicate."
   tags: [postgres, mysql, indexing, sql]
   is_active: true
 
@@ -86,6 +90,10 @@
     that filter active rows hit a tight index. Verify with EXPLAIN ANALYZE that
     the planner picks it.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Queue dashboard listing only open jobs from a huge jobs table."
+      why_it_fits: "The hot subset is small, so the index stays compact and cache-friendly."
+      gotcha: "Queries for archived rows still need another access path."
   tags: [postgres, indexing, selectivity]
   is_active: true
 
@@ -126,6 +134,10 @@
     LIMIT 50. Cursor uses the last row's sort key, so the index seeks directly
     and cost stays roughly constant.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Infinite scroll over a chronological activity feed."
+      why_it_fits: "A cursor on created_at plus id lets the database continue from the last row."
+      gotcha: "Keyset pagination trades away cheap random jumps to page 100."
   tags: [pagination, postgres, mysql]
   is_active: true
 
@@ -167,5 +179,9 @@
     read-skewed, and the included columns rarely change. Otherwise the write
     amplification and bloat may dominate the savings.
   canonical_deep_answer: null
+  examples:
+    - use_case: "Read-heavy product card query needing price, name, and thumbnail URL."
+      why_it_fits: "A covering index can avoid heap lookups on the hottest list path."
+      gotcha: "Frequently edited included columns increase write cost and bloat."
   tags: [postgres, indexing, performance]
   is_active: true

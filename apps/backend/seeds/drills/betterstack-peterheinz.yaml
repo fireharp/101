@@ -1,0 +1,346 @@
+- id: betterstack_peter_sql_injection_ruby_001
+  topic: security
+  subtopic: sql_injection
+  difficulty: 2
+  trap_type: unsafe_string_concat
+  question_text: >
+    You review Ruby code: email = params[:email]; User.find_by_sql("SELECT *
+    FROM users WHERE email = '#{email}'"). What is wrong, how is it exploited,
+    and what is the fix?
+  expected_answer:
+    must_have: [SQL injection, use parameterized queries or ORM binding, user input becomes SQL code not data]
+    nice_to_have: [avoid SQL string interpolation, allowlist dynamic identifiers and keep DB privileges narrow]
+    red_flags: [escaping quotes or sanitizing alone is enough]
+  rubric:
+    must_have: [SQL injection, use parameterized queries or ORM binding, user input becomes SQL code not data]
+    nice_to_have: [avoid SQL string interpolation, allowlist dynamic identifiers and keep DB privileges narrow]
+    red_flags: [escaping quotes or sanitizing alone is enough]
+  canonical_short_answer: >
+    It is SQL injection: attacker-controlled email becomes part of the SQL
+    structure. Use the ORM or bound parameters so input stays a value, never
+    interpolate values into SQL strings; allowlist dynamic identifiers if any.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Ruby login lookup by email"
+      why_it_fits: "Attacker input can turn the WHERE value into SQL syntax."
+      gotcha: "Escaping quotes is not a substitute for bind parameters."
+  tags: [rapid_fundamentals, betterstack, peterheinz, security, ruby, sql]
+  is_active: true
+
+- id: betterstack_peter_xss_csrf_cookie_002
+  topic: security
+  subtopic: csrf_xss
+  difficulty: 2
+  trap_type: threat_confusion
+  question_text: >
+    Explain XSS versus CSRF. If auth is stored in an HttpOnly cookie, which
+    risk is reduced and which still needs explicit protection?
+  expected_answer:
+    must_have: [XSS runs attacker script in your origin, CSRF sends authenticated browser request, HttpOnly reduces token theft but not CSRF]
+    nice_to_have: [SameSite tokens and origin checks protect CSRF]
+    red_flags: [HttpOnly cookie solves CSRF]
+  rubric:
+    must_have: [XSS runs attacker script in your origin, CSRF sends authenticated browser request, HttpOnly reduces token theft but not CSRF]
+    nice_to_have: [SameSite tokens and origin checks protect CSRF]
+    red_flags: [HttpOnly cookie solves CSRF]
+  canonical_short_answer: >
+    XSS executes attacker JavaScript in your origin; CSRF tricks the browser
+    into sending an authenticated request. HttpOnly reduces token theft by XSS,
+    but cookies are still sent automatically, so CSRF needs SameSite, tokens,
+    and origin checks.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Cookie-authenticated settings form"
+      why_it_fits: "HttpOnly hides the cookie from JS, but the browser still sends it."
+      gotcha: "CSRF still needs SameSite, tokens, or origin checks."
+  tags: [rapid_fundamentals, betterstack, peterheinz, security, web]
+  is_active: true
+
+- id: betterstack_peter_incidents_index_003
+  topic: database
+  subtopic: composite_indexes
+  difficulty: 2
+  trap_type: equality_plus_sort
+  question_text: >
+    For incidents WHERE team_id = 42 AND status = 'open' ORDER BY created_at
+    DESC LIMIT 20, what Postgres index would you try first and how verify it?
+  expected_answer:
+    must_have: [composite B-tree index, equality columns before created_at DESC, verify with EXPLAIN ANALYZE]
+    nice_to_have: [partial index for open status if selective]
+    red_flags: [three separate single-column indexes are equivalent]
+  rubric:
+    must_have: [composite B-tree index, equality columns before created_at DESC, verify with EXPLAIN ANALYZE]
+    nice_to_have: [partial index for open status if selective]
+    red_flags: [three separate single-column indexes are equivalent]
+  canonical_short_answer: >
+    Start with a composite B-tree like (team_id, status, created_at DESC) so
+    equality filters come first and the index can satisfy the ordering. Verify
+    with EXPLAIN ANALYZE; if open rows are selective, consider a partial index
+    on status = 'open'.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Open incidents dashboard"
+      why_it_fits: "The query filters by team and status, then reads newest rows."
+      gotcha: "Separate single-column indexes usually do not replace the ordered composite index."
+  tags: [rapid_fundamentals, betterstack, peterheinz, database, postgres]
+  is_active: true
+
+- id: betterstack_peter_reflow_repaint_004
+  topic: frontend
+  subtopic: rendering
+  difficulty: 2
+  trap_type: browser_pipeline
+  question_text: >
+    What is repaint versus reflow/layout? Give one concrete behavior that
+    creates expensive layout work.
+  expected_answer:
+    must_have: [reflow recalculates geometry, repaint redraws pixels, layout thrashing alternates reads and writes]
+    nice_to_have: [batch DOM writes and use transforms for animation]
+    red_flags: [color change always causes reflow]
+  rubric:
+    must_have: [reflow recalculates geometry, repaint redraws pixels, layout thrashing alternates reads and writes]
+    nice_to_have: [batch DOM writes and use transforms for animation]
+    red_flags: [color change always causes reflow]
+  canonical_short_answer: >
+    Reflow recalculates element geometry; repaint redraws pixels without
+    necessarily changing layout. A common bug is layout thrashing: write a style,
+    read offsetHeight, write again in a loop. Batch reads/writes and animate
+    transforms where possible.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Animating an expandable table row"
+      why_it_fits: "Changing height forces layout, while color changes only repaint."
+      gotcha: "Reading offsetHeight after each write creates layout thrashing."
+  tags: [rapid_fundamentals, betterstack, peterheinz, frontend, browser]
+  is_active: true
+
+- id: betterstack_peter_excel_column_005
+  topic: javascript
+  subtopic: base_conversion
+  difficulty: 2
+  trap_type: off_by_one
+  question_text: >
+    Explain the algorithm for Excel column to integer: A=1, Z=26, AA=27. What
+    edge cases do you check?
+  expected_answer:
+    must_have: [base 26 accumulation, A maps to 1 not 0, validate characters and empty input]
+    nice_to_have: [overflow or MAX_SAFE_INTEGER policy]
+    red_flags: [treat AA as 26]
+  rubric:
+    must_have: [base 26 accumulation, A maps to 1 not 0, validate characters and empty input]
+    nice_to_have: [overflow or MAX_SAFE_INTEGER policy]
+    red_flags: [treat AA as 26]
+  canonical_short_answer: >
+    Iterate left to right: result = result * 26 + value(char), with A as 1 and
+    Z as 26, so AA is 1*26 + 1. Check empty input, invalid chars, casing, and
+    what to do beyond Number.MAX_SAFE_INTEGER.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Importing spreadsheet column labels"
+      why_it_fits: "AA and AZ require Excel-style one-based base 26 math."
+      gotcha: "Treating A as zero makes every multi-letter column off by one."
+  tags: [rapid_fundamentals, betterstack, peterheinz, javascript, coding]
+  is_active: true
+
+- id: betterstack_peter_domain_actions_006
+  topic: api_design
+  subtopic: domain_actions
+  difficulty: 3
+  trap_type: generic_crud
+  question_text: >
+    Give the decision rule: when should payment be POST /orders/:id/pay instead
+    of PATCH /orders/:id {status: "paid"}, and when is PATCH still fine?
+  expected_answer:
+    must_have: [use action endpoint for operation with invariants or side effects, action owns validation authorization and idempotency, PATCH is fine for simple representation edits]
+    nice_to_have: [audit events domain errors and internal persistence can still update rows]
+    red_flags: [REST always forbids action endpoints, every field change needs a verb endpoint]
+  rubric:
+    must_have: [use action endpoint for operation with invariants or side effects, action owns validation authorization and idempotency, PATCH is fine for simple representation edits]
+    nice_to_have: [audit events domain errors and internal persistence can still update rows]
+    red_flags: [REST always forbids action endpoints, every field change needs a verb endpoint]
+  canonical_short_answer: >
+    Use POST /pay when payment is a business operation with invariants or side
+    effects: authorization, payment validation, idempotency, audit events, and
+    domain errors. PATCH is still fine for simple representation edits like a
+    note or display field. Internally, /pay may still update rows.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Charging an order"
+      why_it_fits: "Payment has authorization, external side effects, and idempotency needs."
+      gotcha: "PATCHing status can bypass payment-specific invariants."
+  tags: [rapid_fundamentals, betterstack, peterheinz, api_design, product]
+  is_active: true
+
+- id: betterstack_peter_domain_names_007
+  topic: api_design
+  subtopic: naming
+  difficulty: 3
+  trap_type: vague_names
+  question_text: >
+    A teammate proposes one updateOrder endpoint for pay, cancel, refund, and
+    ship. Give the concrete risk and the better API shape.
+  expected_answer:
+    must_have: [different operations have different invariants, separate operation endpoints, validation authorization and errors become explicit]
+    nice_to_have: [audit events idempotency and state transitions become easier to reason about]
+    red_flags: [one generic endpoint is always simpler, hide invalid transitions in UI only]
+  rubric:
+    must_have: [different operations have different invariants, separate operation endpoints, validation authorization and errors become explicit]
+    nice_to_have: [audit events idempotency and state transitions become easier to reason about]
+    red_flags: [one generic endpoint is always simpler, hide invalid transitions in UI only]
+  canonical_short_answer: >
+    Pay, cancel, refund, and ship are different business operations with
+    different invariants and allowed state transitions. Prefer separate domain
+    operation endpoints like /pay, /cancel, /refund, and /ship so validation, authorization,
+    idempotency, audit events, and errors are explicit instead of hidden behind
+    a vague update.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Order refund versus shipment"
+      why_it_fits: "Each operation has different validation, permissions, and errors."
+      gotcha: "A generic update endpoint hides invalid state transitions."
+  tags: [rapid_fundamentals, betterstack, peterheinz, api_design, product]
+  is_active: true
+
+- id: betterstack_peter_endpoint_smoke_008
+  topic: testing
+  subtopic: smoke_tests
+  difficulty: 2
+  trap_type: fake_confidence
+  question_text: >
+    You changed a public endpoint. What is the fastest useful smoke test you
+    would run before calling it safe?
+  expected_answer:
+    must_have: [exercise real HTTP request, assert status and response shape, include auth or permission case]
+    nice_to_have: [check logs or trace for hidden errors]
+    red_flags: [only unit test a helper function]
+  rubric:
+    must_have: [exercise real HTTP request, assert status and response shape, include auth or permission case]
+    nice_to_have: [check logs or trace for hidden errors]
+    red_flags: [only unit test a helper function]
+  canonical_short_answer: >
+    Hit the real HTTP endpoint in a representative environment, assert status,
+    response shape, and the key behavior, plus at least one auth/permission
+    case. Then check logs or traces for hidden errors. Unit tests are useful,
+    but they are not an endpoint smoke test.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Public invoice endpoint change"
+      why_it_fits: "A real HTTP request proves routing, auth, and serialization still work."
+      gotcha: "A helper unit test does not smoke-test the endpoint."
+  tags: [rapid_fundamentals, betterstack, peterheinz, testing, api]
+  is_active: true
+
+- id: betterstack_peter_debug_endpoint_009
+  topic: observability
+  subtopic: debugging
+  difficulty: 3
+  trap_type: random_guessing
+  question_text: >
+    A customer reports a 500 on one endpoint, but you cannot reproduce it
+    locally. What is your debugging path?
+  expected_answer:
+    must_have: [find request id trace or specific failing request, inspect logs and add missing instrumentation, make issue reproducible and add regression or edge case test]
+    nice_to_have: [mention race conditions edge cases or dependency context]
+    red_flags: [restart the service and hope]
+  rubric:
+    must_have: [find request id trace or specific failing request, inspect logs and add missing instrumentation, make issue reproducible and add regression or edge case test]
+    nice_to_have: [mention race conditions edge cases or dependency context]
+    red_flags: [restart the service and hope]
+  canonical_short_answer: >
+    Start from a request id, trace, or exact failing request if possible. Inspect
+    logs with inputs, user/tenant, version, and dependency context; add missing
+    instrumentation if the trail is thin. Reproduce with sanitized real
+    conditions, fix the cause, and add a regression test.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Tenant-only 500 in production"
+      why_it_fits: "A request id links logs, trace data, inputs, and release version."
+      gotcha: "Restarting first can erase the evidence you need."
+  tags: [rapid_fundamentals, betterstack, peterheinz, observability, debugging]
+  is_active: true
+
+- id: betterstack_peter_regex_boundary_010
+  topic: javascript
+  subtopic: parsing
+  difficulty: 3
+  trap_type: regex_overreach
+  question_text: >
+    When is a regular expression the wrong tool for parsing input? Give a
+    concrete example and safer alternative.
+  expected_answer:
+    must_have: [regex is brittle for nested or grammar-based formats, use parser or structured API, validate edge cases]
+    nice_to_have: [regex is fine for small bounded patterns]
+    red_flags: [one giant regex is always cleaner]
+  rubric:
+    must_have: [regex is brittle for nested or grammar-based formats, use parser or structured API, validate edge cases]
+    nice_to_have: [regex is fine for small bounded patterns]
+    red_flags: [one giant regex is always cleaner]
+  canonical_short_answer: >
+    Regex is fine for small bounded patterns, but wrong for nested or grammar
+    formats like HTML, JSON, SQL, or balanced parentheses. Use a parser or
+    structured API, then validate the parsed result and edge cases.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Parsing nested HTML fragments"
+      why_it_fits: "Balanced nesting and escaping are grammar problems, not flat patterns."
+      gotcha: "A larger regex usually adds hidden edge-case bugs."
+  tags: [rapid_fundamentals, betterstack, peterheinz, javascript, parsing]
+  is_active: true
+
+- id: betterstack_peter_rag_bonus_011
+  topic: ai
+  subtopic: rag
+  difficulty: 2
+  trap_type: buzzword_answer
+  question_text: >
+    In 30 seconds, what is RAG and what is one production caveat?
+  expected_answer:
+    must_have: [retrieve relevant documents, add context to model prompt, hard to pick proper content or too much context can spoil answer]
+    nice_to_have: [hard to pick proper content or too much context can spoil answer, cite sources evaluate hallucination risk or guard against prompt injection]
+    red_flags: [RAG fine-tunes the model automatically]
+  rubric:
+    must_have: [retrieve relevant documents, add context to model prompt, hard to pick proper content or too much context can spoil answer]
+    nice_to_have: [hard to pick proper content or too much context can spoil answer, cite sources evaluate hallucination risk or guard against prompt injection]
+    red_flags: [RAG fine-tunes the model automatically]
+  canonical_short_answer: >
+    RAG retrieves relevant documents and passes them as context to the model so
+    the answer can use current or private knowledge. The caveat is retrieval
+    and context quality: stale, irrelevant, malicious, or missing chunks still
+    produce bad answers, so evaluate retrieval, guard against prompt injection,
+    and cite sources where possible.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Support bot answering from runbooks"
+      why_it_fits: "Retrieval supplies current internal context before generation."
+      gotcha: "Bad chunks, stale docs, or prompt injection can still spoil the answer."
+  tags: [rapid_fundamentals, betterstack, peterheinz, ai, rag]
+  is_active: true
+
+- id: betterstack_peter_clean_code_tradeoff_012
+  topic: product
+  subtopic: clean_code
+  difficulty: 3
+  trap_type: abstraction_for_its_own_sake
+  question_text: >
+    What does clean code mean when moving fast on a product team? Keep it
+    practical, not philosophical.
+  expected_answer:
+    must_have: [clear names and small units, tests around risky behavior, simple abstractions that match real duplication]
+    nice_to_have: [delete dead code and keep error handling explicit]
+    red_flags: [clean code means clever abstractions everywhere]
+  rubric:
+    must_have: [clear names and small units, tests around risky behavior, simple abstractions that match real duplication]
+    nice_to_have: [delete dead code and keep error handling explicit]
+    red_flags: [clean code means clever abstractions everywhere]
+  canonical_short_answer: >
+    Clean code is code the next engineer can safely change: clear domain names,
+    small focused functions, tests around risky behavior, explicit error paths,
+    and abstractions only when they remove real duplication or complexity. It
+    should make product changes faster, not just look clever.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Refactoring checkout validation"
+      why_it_fits: "Clear names and focused tests make future payment changes safer."
+      gotcha: "Abstracting before real duplication can make product changes slower."
+  tags: [rapid_fundamentals, betterstack, peterheinz, product, code_quality]
+  is_active: true

@@ -63,6 +63,27 @@ test("offline grader gives semantic partial credit for API rollout wording", asy
   );
 });
 
+test("offline grader credits keepalive spelling for HTTP connection reuse", async () => {
+  const result = await gradeAttempt({
+    drill: Drill.keepAlivePoolQuestion(),
+    transcript:
+      "So there is keepalive so we can reuse same connections and cache, cache opened connections have a connection pool.",
+    duration_seconds: 32,
+  });
+  assert.ok(
+    result.covered_points?.some((point) => point.includes("keep-alive")),
+    `expected keep-alive coverage, got ${result.covered_points?.join(", ")}`,
+  );
+  assert.ok(
+    !result.missed_points.includes("reuse connections via HTTP keep-alive"),
+    `keepalive should not be missed, got ${result.missed_points.join(", ")}`,
+  );
+  assert.ok(
+    result.missed_points.some((point) => point.includes("TLS handshake")),
+    `expected TLS handshake miss, got ${result.missed_points.join(", ")}`,
+  );
+});
+
 test("offline grader applies red-flag penalty for dangerous phrasing", async () => {
   const result = await gradeAttempt({
     drill: Drill.indexQuestion(),
@@ -131,6 +152,25 @@ test("rapid grader caps missing caveat answers at borderline", async () => {
   );
 });
 
+test("rapid grader credits SQL injection answers that mention parameters or ORM", async () => {
+  const result = await gradeAttempt({
+    drill: Drill.rapidRubySqlInjectionQuestion(),
+    transcript:
+      "So it's an SQL injection possibility and the fix would be to sanitize email and use parameterized queries and or ORMs and or frameworks so that you don't get direct parameters and you get them from something like serializers and Django.",
+    duration_seconds: 35,
+  });
+  assert.equal(result.verdict, "borderline");
+  assert.ok(result.score >= 0.6, `expected borderline credit, got ${result.score}`);
+  assert.ok(
+    result.covered_points?.includes("use parameterized queries or ORM binding"),
+    `expected parameterized/ORM credit, got ${result.covered_points?.join(", ")}`,
+  );
+  assert.ok(
+    result.missed_points.includes("user input becomes SQL code not data"),
+    `expected exploit mechanism miss, got ${result.missed_points.join(", ")}`,
+  );
+});
+
 test("rapid grader fails dangerous red flags", async () => {
   const result = await gradeAttempt({
     drill: Drill.rapidSecurityQuestion(),
@@ -141,4 +181,19 @@ test("rapid grader fails dangerous red flags", async () => {
   assert.equal(result.verdict, "fail");
   assert.ok(result.score < 0.6, `expected fail score, got ${result.score}`);
   assert.ok(result.breakdown.red_flag_penalty > 0);
+});
+
+test("rapid grader credits debugging answers for logs instrumentation and reproducibility", async () => {
+  const result = await gradeAttempt({
+    drill: Drill.rapidDebuggingQuestion(),
+    transcript:
+      "So my main debugging pass would be to have logs on my system and to read those logs. If I don't have enough visibility I would add those logs and then check it. I would also just re-run my test suite and just try to add some edge cases, look for race conditions and similar stuff because usually that's something that is missing. But again to make it reach for the main approach would be to make it reproducible.",
+    duration_seconds: 53,
+  });
+  assert.equal(result.verdict, "borderline");
+  assert.ok(result.score >= 0.6, `expected partial credit, got ${result.score}`);
+  assert.ok(
+    result.missed_points.some((point) => point.includes("request id")),
+    `expected request-id miss, got ${result.missed_points.join(", ")}`,
+  );
 });

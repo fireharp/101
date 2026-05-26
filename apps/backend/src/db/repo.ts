@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import { db } from "./index.js";
 import type {
   DrillAttempt,
+  GradingEvaluation,
   DrillItem,
   DrillItemRow,
   GeneratedCard,
   Mode,
+  PracticalExample,
   TokenUsage,
   UserSkillState,
 } from "../types.js";
@@ -22,23 +24,75 @@ function rowToDrillItem(row: DrillItemRow): DrillItem {
     rubric: JSON.parse(row.rubric),
     canonical_short_answer: row.canonical_short_answer,
     canonical_deep_answer: row.canonical_deep_answer,
+    examples: parseJsonArray<PracticalExample>(row.examples),
     tags: JSON.parse(row.tags ?? "[]"),
     is_active: row.is_active === 1,
     created_at: row.created_at,
   };
 }
 
+function parseJsonNullable<T>(value: unknown): T | null {
+  if (typeof value !== "string" || !value) return null;
+  return JSON.parse(value) as T;
+}
+
+function parseJsonArray<T>(value: unknown): T[] {
+  if (typeof value !== "string" || !value) return [];
+  const parsed = JSON.parse(value) as unknown;
+  return Array.isArray(parsed) ? (parsed as T[]) : [];
+}
+
+function rowToGeneratedCard(row: Record<string, unknown>): GeneratedCard {
+  return {
+    id: row.id as string,
+    drill_id: (row.drill_id as string | null) ?? undefined,
+    front: row.front as string,
+    back: row.back as string,
+    topic: (row.topic as string | null) ?? undefined,
+    subtopic: (row.subtopic as string | null) ?? undefined,
+    next_due_at: (row.next_due_at as string | null) ?? undefined,
+    examples: parseJsonArray<PracticalExample>(row.examples),
+  };
+}
+
+function rowToGradingEvaluation(row: Record<string, unknown>): GradingEvaluation {
+  return {
+    id: row.id as string,
+    user_id: row.user_id as string,
+    session_id: row.session_id as string,
+    attempt_id: row.attempt_id as string,
+    drill_id: row.drill_id as string,
+    provider: row.provider as GradingEvaluation["provider"],
+    model: row.model as string,
+    score: (row.score as number | null) ?? null,
+    verdict: (row.verdict as GradingEvaluation["verdict"]) ?? null,
+    covered_points: parseJsonNullable<string[]>(row.covered_points),
+    missed_points: parseJsonNullable<string[]>(row.missed_points),
+    ideal_answer: (row.ideal_answer as string | null) ?? null,
+    raw_json: parseJsonNullable<Record<string, unknown>>(row.raw_json),
+    latency_ms: (row.latency_ms as number | null) ?? null,
+    error: (row.error as string | null) ?? null,
+    estimated_cost_usd: (row.estimated_cost_usd as number | null) ?? null,
+    prompt_hash: row.prompt_hash as string,
+    created_at: row.created_at as string,
+  };
+}
+
 export const drills = {
-  upsert(drill: Omit<DrillItem, "created_at">): void {
+  upsert(
+    drill: Omit<DrillItem, "created_at" | "examples"> & {
+      examples?: PracticalExample[];
+    },
+  ): void {
     const stmt = db.prepare(`
       INSERT INTO drill_items
         (id, topic, subtopic, difficulty, trap_type, question_text,
          expected_answer, rubric, canonical_short_answer,
-         canonical_deep_answer, tags, is_active)
+         canonical_deep_answer, examples, tags, is_active)
       VALUES
         (@id, @topic, @subtopic, @difficulty, @trap_type, @question_text,
          @expected_answer, @rubric, @canonical_short_answer,
-         @canonical_deep_answer, @tags, @is_active)
+         @canonical_deep_answer, @examples, @tags, @is_active)
       ON CONFLICT(id) DO UPDATE SET
         topic=excluded.topic,
         subtopic=excluded.subtopic,
@@ -49,6 +103,7 @@ export const drills = {
         rubric=excluded.rubric,
         canonical_short_answer=excluded.canonical_short_answer,
         canonical_deep_answer=excluded.canonical_deep_answer,
+        examples=excluded.examples,
         tags=excluded.tags,
         is_active=excluded.is_active
     `);
@@ -63,6 +118,7 @@ export const drills = {
       rubric: JSON.stringify(drill.rubric),
       canonical_short_answer: drill.canonical_short_answer,
       canonical_deep_answer: drill.canonical_deep_answer,
+      examples: JSON.stringify(drill.examples ?? []),
       tags: JSON.stringify(drill.tags ?? []),
       is_active: drill.is_active ? 1 : 0,
     });
@@ -89,6 +145,9 @@ export const drills = {
     if (opts.mode === "rapid_fundamentals") {
       where.push("tags LIKE @rapidTag");
       params.rapidTag = '%"rapid_fundamentals"%';
+    } else if (opts.mode === "betterstack_peterheinz") {
+      where.push("tags LIKE @peterTag");
+      params.peterTag = '%"peterheinz"%';
     } else if (
       opts.mode &&
       opts.mode !== "mixed" &&
@@ -204,6 +263,7 @@ export const drills = {
         nice_to_have: string[];
         red_flags: string[];
       };
+      examples?: PracticalExample[];
       tags?: string[];
     },
   ): DrillItem | null {
@@ -223,6 +283,7 @@ export const drills = {
       trap_type:
         fields.trap_type !== undefined ? fields.trap_type : existing.trap_type,
       rubric: fields.rubric ?? existing.rubric,
+      examples: fields.examples ?? existing.examples,
       tags: fields.tags ?? existing.tags,
       // If the rubric changed, mirror to expected_answer too — they used to
       // diverge but in our app they're effectively the same surface.
@@ -364,6 +425,13 @@ export interface DrillPerformance {
   last_seen_at: string | null;
   last_score: number | null;
   last_verdict: string | null;
+}
+
+export interface DrillLastAttempt {
+  drill_id: string;
+  created_at: string;
+  score: number | null;
+  verdict: DrillAttempt["verdict"] | null;
 }
 
 export const attempts = {
@@ -535,11 +603,49 @@ export const attempts = {
       .prepare(
         `SELECT drill_id FROM drill_attempts
            WHERE user_id = ?
-           ORDER BY created_at DESC
+           ORDER BY datetime(created_at) DESC, rowid DESC
            LIMIT ?`,
       )
       .all(userId, limit) as { drill_id: string }[];
     return rows.map((r) => r.drill_id);
+  },
+
+  latestAttemptByDrill(userId: string): DrillLastAttempt[] {
+    const rows = db
+      .prepare(
+        `SELECT drill_id, created_at, score, verdict
+           FROM drill_attempts
+          WHERE user_id = ?
+          ORDER BY datetime(created_at) DESC, rowid DESC`,
+      )
+      .all(userId) as DrillLastAttempt[];
+    const seen = new Set<string>();
+    const out: DrillLastAttempt[] = [];
+    for (const row of rows) {
+      if (seen.has(row.drill_id)) continue;
+      seen.add(row.drill_id);
+      out.push(row);
+    }
+    return out;
+  },
+
+  latestGradedAttemptByDrill(userId: string): DrillLastAttempt[] {
+    const rows = db
+      .prepare(
+        `SELECT drill_id, created_at, score, verdict
+           FROM drill_attempts
+          WHERE user_id = ? AND score IS NOT NULL
+          ORDER BY datetime(created_at) DESC, rowid DESC`,
+      )
+      .all(userId) as DrillLastAttempt[];
+    const seen = new Set<string>();
+    const out: DrillLastAttempt[] = [];
+    for (const row of rows) {
+      if (seen.has(row.drill_id)) continue;
+      seen.add(row.drill_id);
+      out.push(row);
+    }
+    return out;
   },
 
   listForSession(sessionId: string): DrillAttempt[] {
@@ -566,6 +672,131 @@ export const attempts = {
         : null,
       created_at: row.created_at as string,
     }));
+  },
+
+  listBenchmarkCandidates(opts: {
+    user_id?: string;
+    attempt_id?: string;
+    limit?: number;
+  }): DrillAttempt[] {
+    const where = ["transcript IS NOT NULL", "score IS NOT NULL"];
+    const params: Record<string, unknown> = {
+      limit: Math.max(1, Math.min(500, opts.limit ?? 25)),
+    };
+    if (opts.user_id) {
+      where.push("user_id = @user_id");
+      params.user_id = opts.user_id;
+    }
+    if (opts.attempt_id) {
+      where.push("id = @attempt_id");
+      params.attempt_id = opts.attempt_id;
+    }
+    const rows = db
+      .prepare(
+        `SELECT *
+           FROM drill_attempts
+          WHERE ${where.join(" AND ")}
+          ORDER BY created_at DESC
+          LIMIT @limit`,
+      )
+      .all(params) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      id: row.id as string,
+      user_id: row.user_id as string,
+      session_id: row.session_id as string,
+      drill_id: row.drill_id as string,
+      transcript: (row.transcript as string | null) ?? null,
+      duration_seconds: (row.duration_seconds as number | null) ?? null,
+      score: (row.score as number | null) ?? null,
+      verdict: (row.verdict as DrillAttempt["verdict"]) ?? null,
+      missed_points: parseJsonNullable<string[]>(row.missed_points),
+      ideal_answer: (row.ideal_answer as string | null) ?? null,
+      created_cards: parseJsonNullable<GeneratedCard[]>(row.created_cards),
+      created_at: row.created_at as string,
+    }));
+  },
+};
+
+export const gradingEvaluations = {
+  listForAttempt(attemptId: string): GradingEvaluation[] {
+    const rows = db
+      .prepare(
+        `SELECT *
+           FROM grading_evaluations
+          WHERE attempt_id = ?
+          ORDER BY created_at DESC, model ASC`,
+      )
+      .all(attemptId) as Record<string, unknown>[];
+    return rows.map(rowToGradingEvaluation);
+  },
+
+  findCached(opts: {
+    attempt_id: string;
+    provider: GradingEvaluation["provider"];
+    model: string;
+    prompt_hash: string;
+  }): GradingEvaluation | null {
+    const row = db
+      .prepare(
+        `SELECT *
+           FROM grading_evaluations
+          WHERE attempt_id = @attempt_id
+            AND provider = @provider
+            AND model = @model
+            AND prompt_hash = @prompt_hash
+          LIMIT 1`,
+      )
+      .get(opts) as Record<string, unknown> | undefined;
+    return row ? rowToGradingEvaluation(row) : null;
+  },
+
+  upsert(
+    record: Omit<GradingEvaluation, "id" | "created_at" | "cached">,
+  ): GradingEvaluation {
+    const existing = this.findCached({
+      attempt_id: record.attempt_id,
+      provider: record.provider,
+      model: record.model,
+      prompt_hash: record.prompt_hash,
+    });
+    const id = existing?.id ?? randomUUID();
+    db.prepare(
+      `INSERT INTO grading_evaluations
+        (id, user_id, session_id, attempt_id, drill_id, provider, model,
+         score, verdict, covered_points, missed_points, ideal_answer, raw_json,
+         latency_ms, error, estimated_cost_usd, prompt_hash)
+       VALUES
+        (@id, @user_id, @session_id, @attempt_id, @drill_id, @provider, @model,
+         @score, @verdict, @covered_points, @missed_points, @ideal_answer,
+         @raw_json, @latency_ms, @error, @estimated_cost_usd, @prompt_hash)
+       ON CONFLICT(attempt_id, provider, model, prompt_hash) DO UPDATE SET
+         score = excluded.score,
+         verdict = excluded.verdict,
+         covered_points = excluded.covered_points,
+         missed_points = excluded.missed_points,
+         ideal_answer = excluded.ideal_answer,
+         raw_json = excluded.raw_json,
+         latency_ms = excluded.latency_ms,
+         error = excluded.error,
+         estimated_cost_usd = excluded.estimated_cost_usd,
+         created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+    ).run({
+      ...record,
+      id,
+      covered_points: record.covered_points
+        ? JSON.stringify(record.covered_points)
+        : null,
+      missed_points: record.missed_points
+        ? JSON.stringify(record.missed_points)
+        : null,
+      raw_json: record.raw_json ? JSON.stringify(record.raw_json) : null,
+    });
+    return this.findCached({
+      attempt_id: record.attempt_id,
+      provider: record.provider,
+      model: record.model,
+      prompt_hash: record.prompt_hash,
+    })!;
   },
 };
 
@@ -955,16 +1186,47 @@ export const usageEvents = {
 
 export const cards = {
   insertMany(userId: string, cardsIn: GeneratedCard[]): GeneratedCard[] {
-    const stmt = db.prepare(
+    const findExisting = db.prepare(
+      `SELECT * FROM generated_cards
+         WHERE user_id = ? AND front = ? AND back = ?
+         ORDER BY datetime(created_at) ASC, rowid ASC
+         LIMIT 1`,
+    );
+    const updateExistingExamples = db.prepare(
+      `UPDATE generated_cards
+          SET examples = ?
+        WHERE user_id = ? AND front = ? AND back = ?
+          AND (examples IS NULL OR examples = '[]' OR examples = '')`,
+    );
+    const insert = db.prepare(
       `INSERT INTO generated_cards
-         (id, user_id, drill_id, front, back, topic, subtopic, next_due_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+1 day'))`,
+         (id, user_id, drill_id, front, back, topic, subtopic, examples, next_due_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+1 day'))`,
     );
     const out: GeneratedCard[] = [];
     const insertAll = db.transaction((items: GeneratedCard[]) => {
       for (const c of items) {
+        const examples = c.examples ?? [];
+        const existingRow = findExisting.get(userId, c.front, c.back) as
+          | Record<string, unknown>
+          | undefined;
+        const existing = existingRow ? rowToGeneratedCard(existingRow) : undefined;
+        if (existing) {
+          if ((existing.examples ?? []).length === 0 && examples.length > 0) {
+            updateExistingExamples.run(
+              JSON.stringify(examples),
+              userId,
+              c.front,
+              c.back,
+            );
+            out.push({ ...existing, examples });
+          } else {
+            out.push(existing);
+          }
+          continue;
+        }
         const id = c.id ?? randomUUID();
-        stmt.run(
+        insert.run(
           id,
           userId,
           c.drill_id ?? null,
@@ -972,6 +1234,7 @@ export const cards = {
           c.back,
           c.topic ?? null,
           c.subtopic ?? null,
+          JSON.stringify(examples),
         );
         out.push({ ...c, id });
       }
@@ -983,27 +1246,47 @@ export const cards = {
   due(userId: string, limit = 20): GeneratedCard[] {
     return db
       .prepare(
-        `SELECT * FROM generated_cards
-           WHERE user_id = ?
-             AND (next_due_at IS NULL OR datetime(next_due_at) <= datetime('now'))
-           ORDER BY next_due_at ASC
-           LIMIT ?`,
+        `SELECT gc.*
+           FROM generated_cards gc
+           JOIN (
+             SELECT MIN(rowid) AS rowid,
+                    MIN(datetime(COALESCE(next_due_at, '1970-01-01T00:00:00Z'))) AS due_sort
+               FROM generated_cards
+              WHERE user_id = ?
+                AND (next_due_at IS NULL OR datetime(next_due_at) <= datetime('now'))
+              GROUP BY front, back
+              ORDER BY due_sort ASC
+              LIMIT ?
+           ) picked ON picked.rowid = gc.rowid
+           ORDER BY picked.due_sort ASC`,
       )
-      .all(userId, limit) as GeneratedCard[];
+      .all(userId, limit)
+      .map((row) => rowToGeneratedCard(row as Record<string, unknown>));
   },
 
   all(userId: string): GeneratedCard[] {
     return db
       .prepare(
-        `SELECT * FROM generated_cards WHERE user_id = ? ORDER BY created_at DESC`,
+        `SELECT gc.*
+           FROM generated_cards gc
+           JOIN (
+             SELECT MIN(rowid) AS rowid,
+                    MAX(datetime(created_at)) AS created_sort
+               FROM generated_cards
+              WHERE user_id = ?
+              GROUP BY front, back
+              ORDER BY created_sort DESC
+           ) picked ON picked.rowid = gc.rowid
+          ORDER BY picked.created_sort DESC`,
       )
-      .all(userId) as GeneratedCard[];
+      .all(userId)
+      .map((row) => rowToGeneratedCard(row as Record<string, unknown>));
   },
 
   /**
    * SM-2-lite review. `quality` is 0 (forgot) or 1 (knew it).
    *  - knew it: ease *= 1.1 (capped 3.5), interval = max(1, prev*ease) days
-   *  - forgot:  ease *= 0.8 (min 1.3), interval = 0 (review again same day)
+   *  - forgot:  ease *= 0.8 (min 1.3), interval = 0 (review again in 2 hours)
    */
   review(
     userId: string,
@@ -1012,11 +1295,11 @@ export const cards = {
   ): { interval_days: number; ease: number; next_due_at: string } | null {
     const row = db
       .prepare(
-        `SELECT ease, interval_days FROM generated_cards
+        `SELECT front, back, ease, interval_days FROM generated_cards
            WHERE id = ? AND user_id = ?`,
       )
       .get(cardId, userId) as
-      | { ease: number; interval_days: number }
+      | { front: string; back: string; ease: number; interval_days: number }
       | undefined;
     if (!row) return null;
 
@@ -1034,39 +1317,50 @@ export const cards = {
       interval === 0
         ? `UPDATE generated_cards
              SET ease = ?, interval_days = 0,
-                 next_due_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+10 minutes')
-             WHERE id = ? AND user_id = ?
+                 next_due_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+2 hours')
+             WHERE user_id = ? AND front = ? AND back = ?
              RETURNING next_due_at`
         : `UPDATE generated_cards
              SET ease = ?, interval_days = ?,
                  next_due_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)
-             WHERE id = ? AND user_id = ?
+             WHERE user_id = ? AND front = ? AND back = ?
              RETURNING next_due_at`;
     const params =
       interval === 0
-        ? [ease, cardId, userId]
-        : [ease, interval, `+${interval} day`, cardId, userId];
+        ? [ease, userId, row.front, row.back]
+        : [ease, interval, `+${interval} day`, userId, row.front, row.back];
 
-    const out = db.prepare(sql).get(...params) as
-      | { next_due_at: string }
-      | undefined;
-    return out
-      ? { interval_days: interval, ease, next_due_at: out.next_due_at }
+    const out = db.prepare(sql).all(...params) as { next_due_at: string }[];
+    return out.length > 0
+      ? { interval_days: interval, ease, next_due_at: out[0]?.next_due_at ?? "" }
       : null;
   },
 
   count(userId: string): { total: number; due: number } {
     const total = (
       db
-        .prepare("SELECT COUNT(*) AS c FROM generated_cards WHERE user_id = ?")
+        .prepare(
+          `SELECT COUNT(*) AS c
+             FROM (
+               SELECT 1
+                 FROM generated_cards
+                WHERE user_id = ?
+                GROUP BY front, back
+             )`,
+        )
         .get(userId) as { c: number }
     ).c;
     const due = (
       db
         .prepare(
-          `SELECT COUNT(*) AS c FROM generated_cards
-             WHERE user_id = ?
-               AND (next_due_at IS NULL OR datetime(next_due_at) <= datetime('now'))`,
+          `SELECT COUNT(*) AS c
+             FROM (
+               SELECT 1
+                 FROM generated_cards
+                WHERE user_id = ?
+                  AND (next_due_at IS NULL OR datetime(next_due_at) <= datetime('now'))
+                GROUP BY front, back
+             )`,
         )
         .get(userId) as { c: number }
     ).c;

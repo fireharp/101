@@ -202,6 +202,44 @@ export const Drill = {
     };
   },
 
+  jwtRevocationQuestion(): DrillItem {
+    return {
+      id: "sec_jwt_tradeoffs_002",
+      topic: "security",
+      subtopic: "tokens",
+      difficulty: 3,
+      trap_type: "stateless_revocation",
+      question_text:
+        "Your team wants stateless JWT auth for the API. What's the catch and how do you handle revocation?",
+      expected_answer: {
+        must_have: [
+          "JWTs are valid until expiry by design",
+          "no built-in revocation",
+          "short lifetime + refresh tokens",
+          "or maintain a revocation list / version field",
+        ],
+        nice_to_have: ["logout requires server-side state for immediate effect"],
+        red_flags: ["long-lived JWTs are fine", "logout by deleting local token only"],
+      },
+      rubric: {
+        must_have: [
+          "revocation problem named",
+          "short TTL + refresh",
+          "or denylist / version",
+        ],
+        nice_to_have: ["server-side state tradeoff"],
+        red_flags: ["long-lived JWTs are fine", "30-day JWTs by default"],
+      },
+      canonical_short_answer:
+        "Stateless JWTs are valid until they expire. Use short lifetimes plus refresh tokens, or keep a small revocation list / per-user version field that the server checks.",
+      canonical_deep_answer: null,
+      examples: [],
+      tags: ["auth", "jwt"],
+      is_active: true,
+      created_at: new Date().toISOString(),
+    };
+  },
+
   rapidDebuggingQuestion(): DrillItem {
     return {
       id: "rapid_debugging_test",

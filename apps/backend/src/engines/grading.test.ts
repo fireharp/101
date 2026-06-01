@@ -84,6 +84,29 @@ test("offline grader credits keepalive spelling for HTTP connection reuse", asyn
   );
 });
 
+test("offline grader credits JWT revocation table wording", async () => {
+  const result = await gradeAttempt({
+    drill: Drill.jwtRevocationQuestion(),
+    transcript:
+      "revocation is the catch. manage TTL and can have separate revocation table to check as well",
+    duration_seconds: 33,
+  });
+  assert.equal(result.verdict, "borderline");
+  assert.ok(result.score >= 0.6, `expected borderline credit, got ${result.score}`);
+  assert.ok(
+    result.covered_points?.includes("revocation problem named"),
+    `expected revocation problem coverage, got ${result.covered_points?.join(", ")}`,
+  );
+  assert.ok(
+    result.covered_points?.includes("or denylist / version"),
+    `expected revocation table to cover denylist/version, got ${result.covered_points?.join(", ")}`,
+  );
+  assert.ok(
+    result.missed_points.includes("short TTL + refresh"),
+    `expected refresh-token detail to remain missing, got ${result.missed_points.join(", ")}`,
+  );
+});
+
 test("offline grader applies red-flag penalty for dangerous phrasing", async () => {
   const result = await gradeAttempt({
     drill: Drill.indexQuestion(),

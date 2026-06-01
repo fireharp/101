@@ -523,24 +523,45 @@
   difficulty: 3
   trap_type: retry_logic
   question_text: >
-    Summarize Postgres transaction isolation levels and the practical caveat.
+    In practical Postgres terms, when would you use read committed, repeatable
+    read, or serializable? Give one concrete example and the retry caveat.
   expected_answer:
-    must_have: [read committed default, repeatable read snapshot, serializable can abort]
-    nice_to_have: [application must retry serialization failures]
-    red_flags: [serializable means no retries needed]
+    must_have: [read committed per-statement snapshot, repeatable read stable transaction snapshot, serializable protects cross-row invariants by aborting conflicts]
+    nice_to_have: [application must retry serialization failures, concrete example]
+    red_flags: [serializable means no retries needed, isolation replaces constraints or idempotency]
   rubric:
-    must_have: [read committed default, repeatable read snapshot, serializable can abort]
-    nice_to_have: [application must retry serialization failures]
-    red_flags: [serializable means no retries needed]
+    must_have: [read committed per statement, repeatable read stable snapshot, serializable aborts conflicts]
+    nice_to_have: [retry serialization failures, practical example]
+    red_flags: [no retry handling, isolation as magic correctness]
   canonical_short_answer: >
-    Read committed sees committed data per statement; repeatable read gives a
-    stable snapshot; serializable gives stronger anomaly protection by aborting
-    conflicting transactions. The application must handle retries.
-  canonical_deep_answer: null
+    Read committed is the default: each statement sees data committed before
+    that statement starts, so it is fine for simple request handlers. Repeatable
+    read gives one stable snapshot for the whole transaction, useful for a
+    multi-query report or export that must not shift halfway through.
+    Serializable is for business invariants under concurrency, like inventory
+    reservation or seat booking; Postgres may abort a conflicting transaction,
+    so the app must retry safely.
+  canonical_deep_answer: >
+    Think of the levels by what stays stable. Read committed refreshes the view
+    at every SQL statement, so two SELECTs in one transaction can see different
+    committed data. Repeatable read keeps the same snapshot for the transaction,
+    so multiple reads agree with each other, but it is not a substitute for
+    validating writes. Serializable asks Postgres to prevent serial-order
+    anomalies; the price is that a transaction can fail with a serialization
+    error and must be retried by the application.
   examples:
-    - use_case: "Inventory reservation transaction"
-      why_it_fits: "Serializable can prevent anomalies by aborting conflicting writes."
-      gotcha: "Stronger isolation still requires application retry logic."
+    - use_case: "Profile page reads user and settings"
+      why_it_fits: "Read committed is usually enough because each query only needs currently committed data."
+      gotcha: "Two statements can see different committed versions if another request updates between them."
+    - use_case: "Monthly billing export reads invoices, payments, and refunds"
+      why_it_fits: "Repeatable read gives the export one consistent snapshot across several queries."
+      gotcha: "The export may not include rows committed after the transaction started."
+    - use_case: "Checkout reserves the last unit of inventory"
+      why_it_fits: "Serializable can abort one of two conflicting checkouts instead of allowing an impossible business state."
+      gotcha: "The API must catch serialization failures and retry idempotently."
+    - use_case: "Seat booking prevents two users taking the same seat"
+      why_it_fits: "Serializable helps protect the cross-request invariant when availability is checked then written."
+      gotcha: "Still keep unique constraints; isolation is not a replacement for schema guarantees."
   tags: [rapid_fundamentals, betterstack, database, transactions]
   is_active: true
 

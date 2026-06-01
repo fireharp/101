@@ -128,6 +128,12 @@ const TOKEN_ALIASES: Record<string, string> = {
   interpolation: "interpolate",
   interpolate: "interpolate",
   interpolated: "interpolate",
+  blacklist: "denylist",
+  blacklisted: "denylist",
+  blocklist: "denylist",
+  blocklisted: "denylist",
+  denylist: "denylist",
+  denylisted: "denylist",
   keep: "emit",
   keeping: "emit",
   legacy: "old",
@@ -166,13 +172,15 @@ const TOKEN_ALIASES: Record<string, string> = {
   semantics: "semantics",
   sunset: "timeline",
   telemetry: "telemetry",
+  ttl: "ttl",
+  ttls: "ttl",
   usage: "usage",
   version: "version",
   versioned: "version",
   versioning: "version",
 };
 
-const SHORT_KEYWORDS = new Set(["new", "old", "orm", "sql", "v1", "v2"]);
+const SHORT_KEYWORDS = new Set(["new", "old", "orm", "sql", "ttl", "v1", "v2"]);
 
 function canonicalToken(word: string): string {
   const direct = TOKEN_ALIASES[word];
@@ -216,7 +224,45 @@ function tokenSet(text: string): Set<string> {
     set.add("usage");
     set.add("telemetry");
   }
+  if (
+    /\brevocation\b/.test(normalized) &&
+    /\b(catch|problem|issue|gap|hard|impossible|cant|cannot|can t|without state|not built in|no built in)\b/.test(
+      normalized,
+    )
+  ) {
+    set.add("problem");
+    set.add("nam");
+    set.add("named");
+  }
+  if (
+    /\brevocation\b/.test(normalized) &&
+    /\b(table|list|denylist|blocklist|blacklist)\b/.test(normalized)
+  ) {
+    set.add("denylist");
+    set.add("list");
+  }
+  if (
+    /\bshort\s+(ttl|lifetime|lifetimes|expiry|expiration)\b/.test(normalized) ||
+    /\b(ttl|lifetime|lifetimes|expiry|expiration)\s+(short|small|low|brief)\b/.test(
+      normalized,
+    )
+  ) {
+    set.add("short");
+    set.add("ttl");
+    set.add("lifetime");
+  }
+  if (/\brefresh[- ]?token\b|\brefresh\b.*\btoken\b/.test(normalized)) {
+    set.add("refresh");
+    set.add("token");
+  }
   return set;
+}
+
+function requiredKeywordMatches(item: string, keywordCount: number): number {
+  if (/\sor\s|\/|\beither\b/i.test(item)) {
+    return 1;
+  }
+  return keywordCount <= 2 ? keywordCount : Math.ceil(keywordCount * 0.5);
 }
 
 function coverage(transcript: string, items: string[]): {
@@ -234,9 +280,9 @@ function coverage(transcript: string, items: string[]): {
       continue;
     }
     const matched = kws.filter((kw) => tokens.has(kw)).length;
-    // Consider "covered" if enough meaningful keywords appear. Two-word
-    // rubric items need both words so generic words do not dominate.
-    const needed = kws.length <= 2 ? kws.length : Math.ceil(kws.length * 0.5);
+    // Alternatives like "denylist / version" need one side; normal two-word
+    // items still need both words so generic terms do not dominate.
+    const needed = requiredKeywordMatches(item, kws.length);
     if (matched >= needed) hit.push(item);
     else miss.push(item);
   }

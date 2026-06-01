@@ -3,10 +3,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// Load .env from backend, then fall back to repo root so a single shared
-// .env at the workspace root works in dev.
+// Load local env files from backend, then fall back to repo root so a single
+// shared file at the workspace root works in dev. `.inf` is supported for
+// private machine-local secrets used by this workspace.
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 dotenv.config({ path: path.join(__dirname, "..", "..", "..", ".env") });
+dotenv.config({ path: path.join(__dirname, "..", ".inf") });
+dotenv.config({ path: path.join(__dirname, "..", "..", "..", ".inf") });
 
 export const config = {
   port: Number(process.env.PORT ?? 4000),

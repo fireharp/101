@@ -1,0 +1,25 @@
+# Binaries
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Local task binaries (e.g. go build -o 03-slug ./tasks/03-slug)
+/[0-9][0-9]-*
+
+# Test artifacts
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Codecrafters local build output
+codecrafters-shell-go/shell
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

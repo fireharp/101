@@ -13,11 +13,11 @@ func main() {
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Print("$ ")
-		input, err := reader.ReadString('\n')
+		command, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Println("Error reading command:", err)
 		}
-		args := commands.ParseInputToArgs(input)
+		args := strings.Split(strings.TrimSpace(command), " ")
 
 		if handler, ok := commands.Lookup(args[0]); ok {
 			if result := handler(args); result.ExitREPL {

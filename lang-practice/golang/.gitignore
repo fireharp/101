@@ -18,6 +18,9 @@ coverage.html
 # Codecrafters local build output
 codecrafters-shell-go/shell
 
+# Keep codecrafters-shell-go/.git for submissions — never track it in the parent repo
+codecrafters-shell-go/.git/
+
 # IDE / OS
 .idea/
 .vscode/

@@ -1,0 +1,568 @@
+- id: dwelly_sd_rent_collection_timeout_001
+  topic: dwelly_system_design
+  subtopic: rent_collection
+  difficulty: 4
+  trap_type: ambiguous_provider_outcome
+  question_text: >
+    Tenant owes GBP 1,200 rent. They click pay, the PSP capture call times out,
+    a webhook may arrive later, the tenant retries, and landlord payout is
+    scheduled tomorrow. Design the safe flow.
+  expected_answer:
+    must_have:
+      - business idempotency key per invoice collection attempt
+      - PSP idempotency key and stored provider object id
+      - payment attempt state machine that treats timeout as unknown
+      - webhook dedupe before state changes
+      - ledger posting once and payout eligibility based on reconciled state
+    nice_to_have:
+      - pending vs posted vs available balances
+      - reconciliation exception for provider-ledger mismatch
+      - allowed state transitions with optimistic version checks
+    red_flags:
+      - assume timeout means failure
+      - rely on disabling the frontend button
+      - pay landlord from provider webhook alone
+  rubric:
+    must_have:
+      - separates payment attempt lifecycle from ledger truth
+      - makes retries safe with business and provider idempotency
+      - gates payout on internal ledger and reconciliation state
+    nice_to_have:
+      - mentions provider lookup after ambiguous timeout
+      - handles duplicate webhooks and duplicate user clicks
+      - names a manual exception path
+    red_flags:
+      - claims exactly-once payment execution
+      - treats PSP status as the only source of truth
+      - mutates payout state before collection is safely posted
+  canonical_short_answer: >
+    Use a business idempotency key for the rent invoice collection and pass a
+    mapped idempotency key to the PSP. Persist the payment attempt and provider
+    object id, treat timeouts as unknown, process webhooks idempotently, and
+    post the ledger transaction once through a unique constraint. Landlord
+    payout should depend on posted or available internal balances plus
+    reconciliation rules, not a single provider callback.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Monthly rent collection with duplicate click and PSP timeout"
+      why_it_fits: "The design must survive ambiguous external outcomes without double charging or paying early."
+      gotcha: "A new HTTP idempotency key for the same invoice can still double charge unless business uniqueness exists."
+  tags: [dwelly, system_design, payments, idempotency, ledger]
+  is_active: true
+
+- id: dwelly_sd_ledger_source_of_truth_002
+  topic: dwelly_system_design
+  subtopic: ledger_correctness
+  difficulty: 4
+  trap_type: mutable_balance
+  question_text: >
+    Dwelly already has payment_attempt and invoice tables. An interviewer asks
+    why the rent platform needs a ledger at all, and how refunds, fees,
+    chargebacks, and landlord payouts should be represented. Answer at system
+    design depth.
+  expected_answer:
+    must_have:
+      - ledger is internal financial truth, not the PSP lifecycle table
+      - immutable double-entry transactions
+      - balanced entries per currency
+      - refunds and chargebacks as new reversing or adjusting entries
+      - balances are projections from ledger entries
+    nice_to_have:
+      - pending, posted, and available balance distinction
+      - account examples for tenant receivable, clearing, landlord payable, and agency fee revenue
+      - reconciliation against provider and bank reports
+    red_flags:
+      - update a balance column directly as truth
+      - edit old entries for refunds
+      - mix payment status and accounting state into one field
+  rubric:
+    must_have:
+      - states the separation between payment attempts and ledger transactions
+      - describes immutable balanced entries
+      - handles corrections without rewriting history
+    nice_to_have:
+      - names payout eligibility and client-money constraints
+      - explains how missing provider or ledger records become exceptions
+    red_flags:
+      - makes the PSP the ledger
+      - ignores currency-level balancing
+      - says reconciliation is unnecessary
+  canonical_short_answer: >
+    Payment attempts track the external payment lifecycle; the ledger records
+    internal financial truth. Each business event creates immutable,
+    balanced debit and credit entries per currency, and balances are computed
+    from those entries. Refunds, chargebacks, write-offs, and payout
+    corrections are new ledger transactions, not edits to prior ones.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Tenant rent payment with agency fee and landlord payout"
+      why_it_fits: "The ledger can represent allocation, fees, payout liability, and later corrections auditable over time."
+      gotcha: "A payment marked captured can still be inconsistent if the internal ledger transaction is missing."
+  tags: [dwelly, system_design, ledger, accounting, reconciliation]
+  is_active: true
+
+- id: dwelly_sd_temporal_boundaries_003
+  topic: dwelly_system_design
+  subtopic: temporal_boundaries
+  difficulty: 4
+  trap_type: workflow_as_database
+  question_text: >
+    Dwelly wants to use Temporal for rent cycles, payouts, reconciliation,
+    onboarding, and maintenance. Which parts should live in Workflows, which
+    belong in Activities, and which remain in the domain database?
+  expected_answer:
+    must_have:
+      - Temporal orchestrates timers, waits, retries, signals, updates, and ordering
+      - side effects such as DB writes, PSP calls, CRM calls, notifications, and LLM calls are Activities
+      - domain database owns payment, ledger, tenant, property, and audit truth
+      - Workflow code must stay deterministic
+    nice_to_have:
+      - finite workflow ids like rent-cycle lease period instead of immortal property workflows
+      - Queries for status, Signals for async facts, Updates for validated operator actions
+      - Search Attributes as non-sensitive operational indexes
+    red_flags:
+      - put DB reads and provider calls directly in Workflow code
+      - make Temporal the source of financial truth
+      - pass sensitive tenant or payment payloads through history by default
+  rubric:
+    must_have:
+      - draws a hard boundary between orchestration and business truth
+      - correctly assigns side effects to Activities
+      - mentions deterministic replay constraints
+    nice_to_have:
+      - describes Workflow ID shape and data minimization
+      - names message semantics for Signals, Updates, and Queries
+    red_flags:
+      - designs one never-ending workflow per property with no rollover
+      - treats Search Attributes as authoritative state
+      - ignores PII visibility in workflow metadata
+  canonical_short_answer: >
+    Use Temporal for durable process control: timers, waits, retries, message
+    handling, and step ordering. Put all nondeterministic work in Activities,
+    including DB writes, provider calls, document work, notifications, and LLM
+    calls. The Dwelly domain database still owns ledger, payment, property,
+    tenancy, permissions, and audit truth; Temporal should hold references and
+    minimal operational state.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Rent-cycle workflow waiting for payment, webhook, finance approval, and payout"
+      why_it_fits: "Temporal can coordinate long waits and retries while domain services enforce financial invariants."
+      gotcha: "A replaying Workflow must not branch on fresh DB reads or current time outside deterministic APIs."
+  tags: [dwelly, system_design, temporal, workflows, determinism]
+  is_active: true
+
+- id: dwelly_sd_activity_idempotency_004
+  topic: dwelly_system_design
+  subtopic: activity_idempotency
+  difficulty: 4
+  trap_type: retry_side_effect
+  question_text: >
+    A Temporal Activity posts a ledger transaction and calls a payment provider.
+    The worker crashes after the provider succeeds but before the Activity
+    result is recorded. Temporal retries the Activity. How should Dwelly make
+    this safe?
+  expected_answer:
+    must_have:
+      - Activities are at-least-once side-effect boundaries
+      - durable business_operation_id or idempotency_key
+      - unique outcome record before or around side effects
+      - provider idempotency key or provider object lookup
+      - ledger unique constraint for the business event
+    nice_to_have:
+      - outbox or command table for follow-up events
+      - ambiguous outcome remediation path
+      - retry budget and terminal failure state
+    red_flags:
+      - trust Temporal to make external calls exactly once
+      - retry blind provider calls with new keys
+      - post duplicate ledger entries and fix them later manually
+  rubric:
+    must_have:
+      - explains why the Activity may run more than once
+      - defines persistent idempotency at both domain and provider layers
+      - makes ledger posting idempotent
+    nice_to_have:
+      - separates provider result storage from ledger command application
+      - includes reconciliation for unknown outcome
+    red_flags:
+      - suppresses retries instead of making them safe
+      - uses only in-memory locks
+      - loses the provider object id
+  canonical_short_answer: >
+    Treat every money Activity as at-least-once. Give it a durable business
+    operation id, persist an outcome or command record with a unique
+    constraint, pass a stable idempotency key to the provider, and make ledger
+    posting unique by business event. On retry, the Activity should find and
+    return the prior outcome or reconcile an unknown provider result rather
+    than creating a second side effect.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Payment capture Activity retry after worker crash"
+      why_it_fits: "The provider may have charged successfully even though Temporal did not observe the result."
+      gotcha: "Skipping retries can leave the workflow stuck; safe retries require durable idempotency."
+  tags: [dwelly, system_design, temporal, idempotency, payments]
+  is_active: true
+
+- id: dwelly_sd_maintenance_approval_ai_005
+  topic: dwelly_system_design
+  subtopic: maintenance_workflow
+  difficulty: 3
+  trap_type: ai_over_authorization
+  question_text: >
+    Tenant reports a boiler issue. An AI triages urgency and likely category,
+    but repairs above GBP 300 require landlord approval before contractor
+    dispatch. Design the workflow, including human controls and failure modes.
+  expected_answer:
+    must_have:
+      - intake and missing-information loop
+      - AI as recommendation, not spending authority
+      - policy threshold for staff or landlord approval
+      - durable wait for human decision with SLA timer
+      - idempotent contractor booking
+      - audit record for decisions and overrides
+    nice_to_have:
+      - confidence threshold and fallback to staff review
+      - escalation and reassignment
+      - decision reason, actor role, and case version
+    red_flags:
+      - AI directly approves spend
+      - cron-only reminder with no durable case state
+      - double dispatch on repeated approval click
+  rubric:
+    must_have:
+      - keeps authorization in policy and domain service
+      - models approval as durable wait with timer and signal/update
+      - protects contractor dispatch from duplicate execution
+    nice_to_have:
+      - explains manual override and audit semantics
+      - handles timeout without silently closing the case
+    red_flags:
+      - hides approval state in ad hoc emails
+      - ignores who approved and why
+      - conflates classification confidence with permission
+  canonical_short_answer: >
+    Model the case as intake, classification, missing-info collection, policy
+    decision, approval wait, and contractor dispatch. The AI can recommend
+    urgency and category, but spend authorization comes from policy and human
+    approval when required. Store decision actor, role, reason, case version,
+    and audit trail, and make contractor booking idempotent so retries or
+    double-clicks cannot create duplicate jobs.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Emergency maintenance case with landlord approval threshold"
+      why_it_fits: "The workflow mixes AI classification, human approval, timers, and external dispatch."
+      gotcha: "A high-confidence AI answer is not the same as permission to spend landlord money."
+  tags: [dwelly, system_design, workflows, ai, approvals, maintenance]
+  is_active: true
+
+- id: dwelly_sd_provider_normalization_006
+  topic: dwelly_system_design
+  subtopic: provider_integrations
+  difficulty: 3
+  trap_type: leaky_provider_model
+  question_text: >
+    Dwelly integrates with one provider that sends webhooks, one that only
+    exports CSV files, and one with an unreliable polling API. How do you
+    normalize provider data without filling the core domain with provider
+    special cases?
+  expected_answer:
+    must_have:
+      - provider adapter or anti-corruption layer
+      - raw payload or file storage before transformation
+      - canonical event model
+      - dedupe and correlation ids
+      - validation and exception queue for conflicting facts
+    nice_to_have:
+      - replayable imports
+      - schema versioning for canonical events
+      - provider capability matrix
+    red_flags:
+      - core domain branches on provider everywhere
+      - discard raw provider payloads
+      - process webhooks or CSV rows without idempotency
+  rubric:
+    must_have:
+      - contains provider-specific semantics at the adapter boundary
+      - stores raw input and emits canonical events or commands
+      - makes ingestion idempotent and traceable
+    nice_to_have:
+      - includes correlation from provider object to domain entity
+      - has manual remediation for malformed or conflicting data
+    red_flags:
+      - treats all provider statuses as identical
+      - relies on arrival order
+      - cannot replay a provider import
+  canonical_short_answer: >
+    Put provider-specific code in adapters that store raw payloads or files,
+    parse to versioned canonical events, dedupe by provider event or object
+    identity, and correlate to Dwelly domain entities. The core domain should
+    consume validated commands and facts, not provider-specific status fields.
+    Unknown, malformed, or contradictory inputs should create exception cases
+    that can be replayed from the raw source.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Property CRM webhooks plus CSV bank report plus flaky polling provider"
+      why_it_fits: "Each integration has different delivery guarantees but should converge into the same domain model."
+      gotcha: "A canonical model does not mean pretending provider semantics are identical."
+  tags: [dwelly, system_design, integrations, webhooks, dedupe]
+  is_active: true
+
+- id: dwelly_sd_workflow_versioning_007
+  topic: dwelly_system_design
+  subtopic: workflow_versioning
+  difficulty: 4
+  trap_type: replay_breaking_change
+  question_text: >
+    Dwelly changes its rent-cycle workflow while 20,000 old rent workflows are
+    still open. The new code adds an approval step before payout. How do you
+    deploy this without breaking replay or mixing business semantics?
+  expected_answer:
+    must_have:
+      - recognize deterministic replay risk
+      - version or patch workflow code
+      - keep old runs on compatible workers or migration plan
+      - replay tests against historical event histories
+      - explicit policy for old vs new business semantics
+    nice_to_have:
+      - worker versioning or pinned workflows
+      - drain plan and patch removal window
+      - migration only at safe inactive points
+    red_flags:
+      - deploy new workflow code and hope old histories replay
+      - silently change old payout semantics mid-run
+      - mutate workflow history
+  rubric:
+    must_have:
+      - separates code compatibility from product policy
+      - tests replay before rollout
+      - handles in-flight workflows intentionally
+    nice_to_have:
+      - explains canary, rollback, and observability for old and new versions
+      - mentions form or approval schema versioning
+    red_flags:
+      - cancels all old workflows without business recovery
+      - uses one global flag that changes past command sequences
+      - no audit trail for migrated cases
+  canonical_short_answer: >
+    Treat this as both a replay-compatibility problem and a business-policy
+    problem. Use workflow patching or worker versioning so old histories keep
+    replaying on compatible code, run replay tests before rollout, and decide
+    explicitly whether old rent cycles drain under old semantics or migrate at
+    safe points with audit records. Do not let a global code change silently
+    alter money movement already in flight.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Add finance approval before landlord payout while old payout workflows are waiting"
+      why_it_fits: "Changing command order can break replay, and changing approval policy can change business outcomes."
+      gotcha: "A workflow versioning mechanism solves replay but not the product decision about old cases."
+  tags: [dwelly, system_design, temporal, versioning, deployment]
+  is_active: true
+
+- id: dwelly_sd_reconciliation_payouts_008
+  topic: dwelly_system_design
+  subtopic: reconciliation
+  difficulty: 4
+  trap_type: webhook_equals_settlement
+  question_text: >
+    A webhook says rent was captured, but the bank settlement report has a
+    different amount and the landlord payout batch is ready to run. Design
+    Dwelly's reconciliation and payout safety path.
+  expected_answer:
+    must_have:
+      - do not equate webhook success with bank settlement
+      - ingest provider or bank reports idempotently
+      - match reports to payment attempts and ledger entries
+      - create reconciliation exception for mismatch
+      - block or hold affected payout amounts
+    nice_to_have:
+      - tolerance rules and reason codes
+      - finance review workflow with audit trail
+      - adjustment, refund, hold, or write-off commands
+    red_flags:
+      - always payout from webhook status
+      - silently adjust balances to match provider report
+      - ignore partial settlement, fees, or chargebacks
+  rubric:
+    must_have:
+      - distinguishes capture, settlement, ledger posting, and payout eligibility
+      - defines a matching and exception process
+      - prevents unsafe payout on unresolved mismatch
+    nice_to_have:
+      - mentions raw report storage and replay
+      - includes manual finance decision with separation of duties
+    red_flags:
+      - makes reconciliation a dashboard-only concern
+      - treats provider report order as authoritative
+      - loses evidence needed for audit
+  canonical_short_answer: >
+    Webhook capture is not the same as settled funds or payout eligibility.
+    Ingest settlement reports idempotently, store raw evidence, match them to
+    payment attempts and ledger transactions, and create an exception when
+    amount, currency, provider object, or timing differs. Hold affected payout
+    amounts until finance resolves the case through an audited adjustment,
+    refund, write-off, or release command.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Provider capture event differs from bank settlement report before landlord payout"
+      why_it_fits: "The design must keep landlord payout safe while preserving evidence and auditability."
+      gotcha: "Reconciling by silently editing ledger balances destroys financial audit history."
+  tags: [dwelly, system_design, reconciliation, payouts, ledger]
+  is_active: true
+
+- id: dwelly_sd_saga_compensation_ordering_009
+  topic: dwelly_system_design
+  subtopic: saga_compensation
+  difficulty: 4
+  trap_type: late_compensation_registration
+  question_text: >
+    Dwelly runs a payout saga: reserve landlord funds, create a provider payout,
+    notify finance, then mark the batch submitted. The provider call times out
+    after it may have created the payout. How should the Workflow code register
+    and run compensating actions?
+  expected_answer:
+    must_have:
+      - register compensation before the forward Activity that may need undo
+      - compensation must be conditional or idempotent if the forward step may not have completed
+      - run compensations on failure in reverse dependency order unless independent
+      - compensation is business-specific forward recovery, not database rollback
+      - provider and ledger side effects still need idempotency keys and durable outcome lookup
+    nice_to_have:
+      - cancellation and timeout can happen after partial side effects
+      - avoid Workflow timeouts or terminate paths that prevent compensation code from running
+      - record compensation attempts and failures for finance review
+    red_flags:
+      - add compensation only after the Activity returns success
+      - rollback database snapshots across services
+      - assume Temporal prevents the provider side effect from happening on timeout
+  rubric:
+    must_have:
+      - explains the late-registration bug
+      - designs if-present or already-done-safe compensators
+      - separates compensation from exact undo of external reality
+    nice_to_have:
+      - covers parallel vs reverse-order compensation tradeoff
+      - routes ambiguous provider outcomes to reconciliation
+    red_flags:
+      - treats compensation as automatic magic from the workflow engine
+      - compensates money movement without checking provider and ledger state
+      - loses audit evidence for failed compensation
+  canonical_short_answer: >
+    Register each compensating action before invoking the Activity whose side
+    effect it may need to clean up, because a timeout or cancellation can occur
+    after the side effect but before the Activity result is recorded. The
+    compensator should be safe if the forward action did not happen, such as
+    cancelPayoutIfPresent, and should use durable provider and ledger lookup.
+    Run compensations in reverse dependency order unless the actions are truly
+    independent, and treat failures as audited remediation cases.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Landlord payout saga with provider timeout after possible payout creation"
+      why_it_fits: "The Workflow must preserve business consistency when a forward Activity has an ambiguous result."
+      gotcha: "Registering the compensation after provider success leaves no cleanup path if the Activity times out mid-call."
+  tags: [dwelly, system_design, temporal, sagas, compensation, payouts]
+  is_active: true
+
+- id: dwelly_sd_saga_vs_2pc_010
+  topic: dwelly_system_design
+  subtopic: saga_design
+  difficulty: 4
+  trap_type: distributed_transaction_tradeoff
+  question_text: >
+    Dwelly needs one logical operation to create a rent invoice, reserve funds,
+    call a PSP, post ledger entries, and notify finance. An interviewer asks
+    whether to use two-phase commit, a saga, or a simple status column. Make the
+    design call and explain the failure semantics.
+  expected_answer:
+    must_have:
+      - sagas fit multi-step operations across independently failing services or databases
+      - each step commits a local transaction and records progress
+      - forward progress uses retries from durable workflow state
+      - backward recovery uses explicit compensating actions
+      - Activities and provider calls need idempotency keys
+    nice_to_have:
+      - 2PC couples participants and can reduce availability across service boundaries
+      - simple status column is acceptable only for low-risk linear workflows
+      - if the saga becomes huge, revisit service boundaries
+    red_flags:
+      - treat saga as one giant ACID transaction
+      - use 2PC with PSPs or third-party APIs
+      - skip progress tracking and infer state from logs
+  rubric:
+    must_have:
+      - "names the two saga halves: forward progress and compensation"
+      - explains local transaction boundaries
+      - rejects cross-service locking for Dwelly provider workflows
+    nice_to_have:
+      - describes workflow state as resumable after worker or process loss
+      - gives a concrete idempotency key shape for invoice or payout operations
+    red_flags:
+      - says Temporal removes the need for idempotency
+      - uses compensation for every failure when retry would be correct
+      - ignores partial execution as a first-class state
+  canonical_short_answer: >
+    Use a saga when the operation spans Dwelly services, databases, and PSP
+    calls where partial execution is not acceptable but a single distributed
+    ACID transaction is unrealistic. Each step should commit locally, persist
+    progress, retry safely from durable workflow state, and define explicit
+    compensations for committed side effects that must be undone. A status
+    column is fine for simple workflows; 2PC is the wrong default for PSP and
+    independently deployed service boundaries.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Rent invoice to PSP capture to ledger posting to finance notification"
+      why_it_fits: "The operation crosses services and external providers but needs a consistent business outcome."
+      gotcha: "A saga gives transaction-like business semantics, not database rollback or exactly-once side effects."
+  tags: [dwelly, system_design, temporal, sagas, transactions, idempotency]
+  is_active: true
+
+- id: dwelly_sd_temporal_namespace_topology_011
+  topic: dwelly_system_design
+  subtopic: temporal_namespaces
+  difficulty: 3
+  trap_type: namespace_over_or_under_split
+  question_text: >
+    Dwelly is rolling out Temporal for payments, provider imports, maintenance,
+    and tenant onboarding across dev, staging, and production. How would you
+    choose Namespace boundaries and names, and when would you split later?
+  expected_answer:
+    must_have:
+      - start with the smallest Namespace set that gives clear ownership and safe isolation
+      - separate environments such as dev, staging, and production
+      - split by use case/service/environment when services need separate credentials, APS limits, or on-call ownership
+      - consider use case/domain/environment when domains need stronger release and permission boundaries
+      - avoid namespace-per-tenant unless tenant-specific compliance, credentials, or capacity truly require it
+    nice_to_have:
+      - lowercase hyphenated names like rent-payments-prd or provider-ingest-stg
+      - Task Queue and Workflow ID uniqueness within shared Namespaces
+      - tags or IaC for owner, criticality, data sensitivity, and lifecycle management
+    red_flags:
+      - put all dev, staging, and prod workflows in one Namespace
+      - create a Namespace for every landlord by default
+      - ignore APS limits, access control, and alerting boundaries
+  rubric:
+    must_have:
+      - ties namespace boundaries to ownership, credentials, limits, and blast radius
+      - gives a concrete Dwelly naming scheme
+      - explains split-later triggers
+    nice_to_have:
+      - mentions Nexus for cross-Namespace service contracts
+      - includes deletion protection or Terraform for production Namespaces
+    red_flags:
+      - treats Namespaces as folders only
+      - assumes Task Queues provide all tenant isolation needs
+      - creates topology without operational owners
+  canonical_short_answer: >
+    Start with one Namespace per use case and environment, then split only when
+    ownership, credentials, APS pressure, troubleshooting, or blast-radius
+    needs justify the operational cost. For Dwelly, names such as
+    rent-payments-prd, provider-ingest-stg, and maintenance-case-dev make the
+    boundary explicit. Use per-tenant Namespaces only for a small number of
+    tenants that need real compliance, credential, capacity, or debugging
+    isolation; otherwise use shared Namespaces with tenant-aware task routing.
+  canonical_deep_answer: null
+  examples:
+    - use_case: "Temporal topology for Dwelly payments, provider ingest, and maintenance workflows"
+      why_it_fits: "Each workflow family has different credentials, blast radius, throughput, and ownership needs."
+      gotcha: "Too few Namespaces couples prod and service limits; too many create provisioning and cross-Namespace coordination overhead."
+  tags: [dwelly, system_design, temporal, namespaces, operations]
+  is_active: true

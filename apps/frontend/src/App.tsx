@@ -37,6 +37,7 @@ const MODES: { value: Mode; label: string }[] = [
   { value: "betterstack_peterheinz", label: "Better Stack / Petr" },
   { value: "db_indexes", label: "DB indexes" },
   { value: "system_design", label: "System design" },
+  { value: "dwelly_system_design", label: "Dwelly system design" },
   { value: "weak_topics", label: "Weak topics" },
   { value: "mock_interview", label: "Mock interview" },
 ];

@@ -158,6 +158,7 @@ export const drills = {
       const modeTopicMap: Record<string, string> = {
         db_indexes: "database",
         system_design: "system_design",
+        dwelly_system_design: "dwelly_system_design",
       };
       const topic = modeTopicMap[opts.mode];
       if (topic) {

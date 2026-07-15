@@ -320,6 +320,7 @@ export const DRILL_COACH_TOOLS = [
             "mixed",
             "db_indexes",
             "system_design",
+            "dwelly_system_design",
             "weak_topics",
             "mock_interview",
             "rapid_fundamentals",

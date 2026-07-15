@@ -51,6 +51,7 @@ const modeSchema = z.enum([
   "mixed",
   "db_indexes",
   "system_design",
+  "dwelly_system_design",
   "weak_topics",
   "mock_interview",
   "rapid_fundamentals",

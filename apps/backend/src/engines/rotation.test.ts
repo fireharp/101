@@ -102,6 +102,8 @@ seedDrill("db-c", "database", "covering", 4, "write_cost");
 seedDrill("sd-a", "system_design", "rate_limiting", 3, "bucket_choice");
 seedDrill("sd-b", "system_design", "caching", 3, "stale_read");
 seedDrill("sd-c", "system_design", "queues", 2, "queue_mismatch");
+seedDrill("dwelly-a", "dwelly_system_design", "rent_collection", 4, "timeout");
+seedDrill("dwelly-b", "dwelly_system_design", "reconciliation", 4, "mismatch");
 seedDrill("cc-a", "concurrency", "locking", 3, "lock_choice");
 drills.upsert({
   id: "rapid-sec",
@@ -403,6 +405,23 @@ test("db_indexes mode only returns database drills", () => {
     assert.equal(
       drill!.topic,
       "database",
+      `iter ${i} returned ${drill!.topic}/${drill!.id}`,
+    );
+  }
+});
+
+test("dwelly_system_design mode only returns Dwelly system design drills", () => {
+  const session = sessions.create(userId, "dwelly_system_design");
+  for (let i = 0; i < 6; i++) {
+    const drill = selectNextDrill({
+      user_id: userId,
+      session_id: session.id,
+      mode: "dwelly_system_design",
+    });
+    assert.ok(drill);
+    assert.equal(
+      drill!.topic,
+      "dwelly_system_design",
       `iter ${i} returned ${drill!.topic}/${drill!.id}`,
     );
   }

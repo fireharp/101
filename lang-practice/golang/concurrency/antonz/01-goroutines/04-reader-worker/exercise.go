@@ -8,22 +8,28 @@ func countDigitsInWords(next func() string) counter {
 
 	// sends words to be counted
 	go func() {
-		// Fetch words from the generator
-		// and send them to the pending channel.
-		_ = next
+		defer close(pending)
+		for word := next(); word != ""; word = next() {
+			pending <- word
+		}
 	}()
 
 	// counts digits in words
 	go func() {
+		defer close(counted)
 		// Read the words from the pending channel,
 		// count the number of digits in each word,
 		// and send the results to the counted channel.
-		_ = pending
+		for word := range pending {
+			counted <- pair{word: word, count: countDigits(word)}
+		}
 	}()
 
 	// Read values from the counted channel and fill stats.
 	stats := counter{}
-	_ = counted
+	for pair := range counted {
+		stats[pair.word] = pair.count
+	}
 
 	return stats
 }

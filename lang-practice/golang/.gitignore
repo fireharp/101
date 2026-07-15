@@ -21,6 +21,9 @@ codecrafters-shell-go/shell
 # Keep codecrafters-shell-go/.git for submissions — never track it in the parent repo
 codecrafters-shell-go/.git/
 
+# Maelstrom test harness for fly-gossip-glomers (install from GitHub releases)
+fly-gossip-glomers/maelstrom/
+
 # IDE / OS
 .idea/
 .vscode/

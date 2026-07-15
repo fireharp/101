@@ -1,13 +1,16 @@
-.PHONY: help test test-debug lint run run-debug new-task list-tasks tidy
+.PHONY: help test test-debug lint run run-debug new-task list-tasks list-concurrency tidy
 
 help:
 	@echo "Go practice workspace"
 	@echo ""
 	@echo "  make list-tasks          List available tasks"
-	@echo "  make run 01-hello-world  Run one exercise"
+	@echo "  make list-concurrency    List concurrency exercise folders"
+	@echo "  make run 01-hello-world  Run one task"
+	@echo "  make run concurrency/hugo-cruz/04-worker-pool  Run concurrency exercise (if main exists)"
 	@echo "  make run-debug 01-hello-world  Run with debug logging (-tags=debug)"
 	@echo "  make test                Run all tests"
 	@echo "  make test 02-fizzbuzz    Run tests for one task"
+	@echo "  make test concurrency/antonz/01-goroutines/01-counting-digits"
 	@echo "  make test-debug          Run all tests with debug logging enabled"
 	@echo "  make test-debug 02-fizzbuzz  Run one task's tests with debug logging"
 	@echo "  make lint                Run golangci-lint (if installed)"
@@ -17,28 +20,43 @@ help:
 list-tasks:
 	@ls -1 tasks
 
+list-concurrency:
+	@find concurrency -type f \( -name exercise.go -o -name main.go \) ! -path '*/support.go' | sed 's|/exercise.go||;s|/main.go||;s|^concurrency/||' | sort -u
+
 run:
 	@task="$(filter-out $@,$(MAKECMDGOALS))"; \
 	if [ -z "$$task" ]; then \
-		echo "usage: make run <task>" >&2; \
+		echo "usage: make run <task-or-concurrency-path>" >&2; \
 		exit 1; \
 	fi; \
-	go run ./tasks/$$task
+	case "$$task" in \
+		concurrency/*) pkg="./$$task" ;; \
+		*) pkg="./tasks/$$task" ;; \
+	esac; \
+	go run "$$pkg"
 
 run-debug:
 	@task="$(filter-out $@,$(MAKECMDGOALS))"; \
 	if [ -z "$$task" ]; then \
-		echo "usage: make run-debug <task>" >&2; \
+		echo "usage: make run-debug <task-or-concurrency-path>" >&2; \
 		exit 1; \
 	fi; \
-	go run -tags=debug ./tasks/$$task
+	case "$$task" in \
+		concurrency/*) pkg="./$$task" ;; \
+		*) pkg="./tasks/$$task" ;; \
+	esac; \
+	go run -tags=debug "$$pkg"
 
 test:
 	@task="$(filter-out $@,$(MAKECMDGOALS))"; \
 	if [ -z "$$task" ]; then \
 		go test -v -count=1 ./...; \
 	else \
-		go test -v -count=1 ./tasks/$$task/...; \
+		case "$$task" in \
+			concurrency/*) pkg="./$$task/..." ;; \
+			*) pkg="./tasks/$$task/..." ;; \
+		esac; \
+		go test -v -count=1 "$$pkg"; \
 	fi
 
 test-debug:
@@ -46,7 +64,11 @@ test-debug:
 	if [ -z "$$task" ]; then \
 		go test -v -count=1 -tags=debug ./...; \
 	else \
-		go test -v -count=1 -tags=debug ./tasks/$$task/...; \
+		case "$$task" in \
+			concurrency/*) pkg="./$$task/..." ;; \
+			*) pkg="./tasks/$$task/..." ;; \
+		esac; \
+		go test -v -count=1 -tags=debug "$$pkg"; \
 	fi
 
 lint:
